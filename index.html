@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<!-- 图片和媒体都来自 B 站自己的域名，带上来源会被它的 CDN 白名单拒掉 -->
+<meta name="referrer" content="no-referrer">
+<title>B站搜索器</title>
+<style>
+/* ---------- 设计令牌（Cupertino 系统风格） ---------- */
+:root{
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", Roboto, sans-serif;
+  --accent:#007AFF; --danger:#FF3B30; --success:#34C759; --warn:#FF9500;
+
+  --bg:#F2F2F7; --card:#FFFFFF; --elevated:#FFFFFF; --fill:#E9E9EB;
+  --label:#1C1C1E; --label2:#3C3C43CC; --label3:#8E8E93; --sep:#E5E5EA;
+  --shadow:0 1px 3px rgba(0,0,0,.08), 0 8px 24px rgba(0,0,0,.10);
+  --shadow-sm:0 1px 2px rgba(0,0,0,.06), 0 4px 12px rgba(0,0,0,.06);
+
+  --r-control:12px; --r-card:16px; --r-sheet:20px;
+  --gap:16px; --ease:cubic-bezier(.4,0,.2,1);
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#000000; --card:#1C1C1E; --elevated:#2C2C2E; --fill:#2C2C2E;
+    --label:#FFFFFF; --label2:#EBEBF599; --label3:#EBEBF54D; --sep:#38383A;
+    --accent:#0A84FF;
+    --shadow:0 1px 3px rgba(0,0,0,.5), 0 8px 24px rgba(0,0,0,.6);
+    --shadow-sm:0 1px 2px rgba(0,0,0,.4), 0 4px 12px rgba(0,0,0,.5);
+  }
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--bg);color:var(--label);font-family:var(--font);
+  font-size:17px;line-height:1.47;
+  padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+  touch-action:manipulation;
+}
+img{background:var(--fill)}
+a{color:var(--accent);text-decoration:none}
+h1,h2,h3{font-weight:600;letter-spacing:.01em;margin:0}
+
+.wrap{max-width:720px;margin:0 auto;padding:0 16px}
+@media (min-width:734px){ .wrap{max-width:760px} }
+
+/* ---------- 顶部 ---------- */
+header{position:sticky;top:0;z-index:20;background:color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);
+  border-bottom:1px solid var(--sep);padding:12px 0 10px}
+.bar{display:flex;align-items:center;gap:12px}
+.title{font-size:28px;font-weight:700;letter-spacing:.01em;flex:1;min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.who{font-size:12px;color:var(--label3);text-align:right;line-height:1.3;flex:0 0 auto;max-width:46%}
+.who b{color:var(--success);font-weight:600}
+
+.field{width:100%;height:44px;border:none;border-radius:var(--r-control);background:var(--fill);
+  color:var(--label);font:inherit;font-size:17px;padding:0 14px;outline:none;margin-top:10px}
+.field:focus{box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent)}
+.field::placeholder{color:var(--label3)}
+
+.seg{display:flex;gap:2px;background:var(--fill);border-radius:10px;padding:2px;margin-top:10px}
+.seg button{flex:1;height:32px;border:none;border-radius:8px;background:transparent;
+  color:var(--label);font:inherit;font-size:13px;font-weight:500;cursor:pointer}
+.seg button.on{background:var(--card);box-shadow:var(--shadow-sm);font-weight:600}
+@media (prefers-color-scheme: dark){ .seg button.on{background:#636366} }
+
+/* ---------- 按钮 ---------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  min-height:44px;padding:0 18px;border:none;border-radius:var(--r-control);
+  background:var(--fill);color:var(--accent);font:inherit;font-size:17px;font-weight:500;
+  cursor:pointer;transition:transform .2s var(--ease), opacity .2s var(--ease)}
+.btn:active{transform:scale(.97)}
+.btn.primary{background:var(--accent);color:#fff}
+.btn.plain{background:transparent;padding:0 4px}
+.btn.danger{color:var(--danger)}
+.btn[disabled]{opacity:.4}
+.btn.block{width:100%}
+.btn.small{min-height:34px;font-size:14px;padding:0 12px;border-radius:10px}
+
+/* ---------- 列表（整组一张卡片，行高≥44） ---------- */
+.group{background:var(--card);border-radius:var(--r-card);overflow:hidden;box-shadow:var(--shadow-sm);
+  margin:12px 0}
+.row{position:relative;display:flex;gap:12px;align-items:center;padding:12px 16px;min-height:44px;
+  color:inherit;cursor:pointer}
+.row:active{background:var(--fill)}
+.row:not(:last-child)::after{content:"";position:absolute;left:16px;right:0;bottom:0;
+  height:1px;background:var(--sep)}
+.row .thumb{width:100px;height:62px;flex:0 0 auto;border-radius:8px;object-fit:cover}
+.row .thumb.round{width:52px;height:52px;border-radius:50%}
+.row .body{min-width:0;flex:1}
+.row .t{font-size:15px;font-weight:600;line-height:1.35;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.row .s{font-size:12px;color:var(--label3);margin-top:3px;display:flex;flex-wrap:wrap;gap:8px}
+.row .s b{font-weight:500;color:var(--label2)}
+.chev{color:var(--label3);flex:0 0 auto;font-size:20px}
+
+.hint{color:var(--label3);font-size:13px;line-height:1.6;margin:12px 2px}
+.empty{color:var(--label3);text-align:center;padding:56px 24px;font-size:15px;line-height:1.8}
+.section-title{font-size:20px;font-weight:600;margin:28px 2px 8px}
+
+/* ---------- 详情页 ---------- */
+.sheet{position:fixed;inset:0;z-index:30;background:var(--bg);display:none;overflow:hidden}
+.sheet.on{display:flex;flex-direction:column}
+/* 关键：flex + min-height:0 才能把 .scroller 变成滚动容器。
+   之前只写 height:100%，而父层 .panel 是 auto 高度，百分比高度直接失效，
+   内容溢出到屏幕外又没任何元素可滚——这就是手机上滑不动的原因。 */
+.panel{flex:1;min-height:0;display:flex;flex-direction:column;width:100%}
+.scroller{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+.topbar{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:8px;
+  padding:10px 16px;background:color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);
+  border-bottom:1px solid var(--sep)}
+.topbar b{flex:1;min-width:0;font-size:15px;font-weight:600;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+@media (min-width:734px){
+  .sheet{background:rgba(0,0,0,.42);padding:32px 0}
+  .sheet .panel{max-width:760px;margin:0 auto;background:var(--bg);
+    border-radius:var(--r-sheet);overflow:hidden;box-shadow:var(--shadow)}
+}
+.inner{padding:16px 16px 64px}
+.inner h1{font-size:24px;line-height:1.3;margin-bottom:10px}
+.hero{width:100%;border-radius:var(--r-card);margin:4px 0 14px;display:block}
+.metaline{display:flex;flex-wrap:wrap;gap:10px;font-size:13px;color:var(--label3);margin-bottom:12px}
+.bvid{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--label3);
+  background:var(--card);border-radius:10px;padding:8px 12px;margin-bottom:12px}
+.bvid code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--label);font-size:13px}
+.bvid .btn{margin-left:auto}
+
+.up{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--card);
+  border-radius:var(--r-card);box-shadow:var(--shadow-sm);margin-bottom:12px;cursor:pointer}
+.up img{width:44px;height:44px;border-radius:50%;flex:0 0 auto}
+.up .n{flex:1;min-width:0}
+.up .n b{display:block;font-size:15px}
+.up .n span{font-size:12px;color:var(--label3)}
+
+/* 四连按钮：图标 + 文字 + 数字 */
+.acts{display:grid;grid-template-columns:repeat(4,1fr);background:var(--card);
+  border-radius:var(--r-card);box-shadow:var(--shadow-sm);overflow:hidden;margin-bottom:12px}
+.acts button{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:3px;min-height:64px;border:none;background:transparent;color:var(--label);
+  font:inherit;font-size:12px;cursor:pointer;padding:6px 2px}
+.acts button:active{background:var(--fill)}
+.acts button:not(:first-child)::before{content:"";position:absolute;left:0;top:14px;bottom:14px;
+  width:1px;background:var(--sep)}
+.acts button.on{color:var(--accent)}
+.acts button small{color:var(--label3);font-size:11px}
+.acts button.on small{color:var(--accent)}
+.actlog{font-size:12px;color:var(--label3);margin:-6px 2px 12px;line-height:1.5}
+
+.desc{background:var(--card);border-radius:var(--r-card);padding:12px 14px;font-size:14px;
+  color:var(--label2);white-space:pre-wrap;margin-bottom:12px;box-shadow:var(--shadow-sm)}
+.player video{width:100%;border-radius:var(--r-card);background:#000;display:block}
+.article{font-size:16px;line-height:1.75;word-break:break-word}
+.article img,.article video{max-width:100%;height:auto;border-radius:10px}
+.article a{word-break:break-all}
+
+/* 评论 */
+.cmt{display:flex;gap:10px;padding:12px 0;border-bottom:1px solid var(--sep)}
+.cmt:last-child{border-bottom:none}
+.cmt img{width:34px;height:34px;border-radius:50%;flex:0 0 auto}
+.cmt .c{min-width:0;flex:1}
+.cmt .u{font-size:12px;color:var(--label3)}
+.cmt .m{font-size:15px;white-space:pre-wrap;word-break:break-word;margin-top:2px}
+.cmt .s{font-size:11px;color:var(--label3);margin-top:5px;display:flex;gap:12px}
+
+/* ---------- 弹层（移动端底部 sheet） ---------- */
+.dlg{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.4);display:none;
+  align-items:flex-end;justify-content:center}
+.dlg.on{display:flex}
+.box{width:100%;max-width:100%;background:var(--bg);border-radius:var(--r-sheet) var(--r-sheet) 0 0;
+  padding:0 16px calc(20px + env(safe-area-inset-bottom));max-height:86vh;overflow-y:auto;
+  animation:up .25s var(--ease)}
+@keyframes up{from{transform:translateY(12px);opacity:0}to{transform:none;opacity:1}}
+.grabber{width:36px;height:5px;border-radius:3px;background:var(--label3);opacity:.4;margin:8px auto 14px}
+.box h3{font-size:17px;font-weight:600;margin-bottom:4px}
+.box .sub{font-size:13px;color:var(--label3);margin-bottom:12px}
+.grid-row{display:flex;align-items:center;gap:12px;min-height:56px;padding:10px 0;
+  border-top:1px solid var(--sep)}
+.grid-row .k{flex:1;min-width:0;font-size:15px}
+.grid-row .k small{display:block;color:var(--label3);font-size:12px;margin-top:2px}
+@media (min-width:734px){
+  .dlg{align-items:center}
+  .box{max-width:440px;border-radius:var(--r-sheet);padding-bottom:20px;animation:none}
+}
+label.check{display:flex;align-items:center;gap:12px;min-height:48px;border-top:1px solid var(--sep);
+  font-size:15px;cursor:pointer}
+label.check input{width:22px;height:22px;accent-color:var(--accent)}
+
+#toast{position:fixed;left:50%;bottom:32px;transform:translateX(-50%) translateY(12px);
+  background:rgba(0,0,0,.86);color:#fff;padding:11px 18px;border-radius:22px;font-size:14px;
+  z-index:60;opacity:0;transition:.2s var(--ease);pointer-events:none;max-width:86vw;text-align:center}
+#toast.on{opacity:1;transform:translateX(-50%)}
+.spin{display:inline-block;width:15px;height:15px;border:2px solid var(--fill);
+  border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;
+  vertical-align:-3px;margin-right:6px}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="bar">
+      <div class="title">B站搜索器</div>
+      <button class="btn small" id="histbtn">历史</button>
+      <div class="who" id="me">…</div>
+    </div>
+    <form id="sf" autocomplete="off">
+      <input class="field" type="search" id="q" placeholder="搜索视频、UP主、专栏"
+             autocomplete="off" enterkeyhint="search">
+    </form>
+    <div class="seg" id="tabs">
+      <button data-t="video" class="on">视频</button>
+      <button data-t="bili_user">UP主</button>
+      <button data-t="article">专栏</button>
+    </div>
+  </div>
+</header>
+
+<div class="wrap" style="padding-bottom:48px">
+  <div id="list">
+    <div class="empty">没有推荐流。<br>想清楚要看什么，再搜。</div>
+  </div>
+  <button class="btn block" id="more" hidden style="margin:8px 0 32px">下一页</button>
+</div>
+
+<div class="sheet" id="sheet">
+  <div class="panel">
+    <div class="scroller">
+      <div class="topbar"><button class="btn plain" id="back">‹ 返回</button><b id="stitle"></b></div>
+      <div class="inner" id="sbody"></div>
+    </div>
+  </div>
+</div>
+
+<div class="dlg" id="dlg"><div class="box" id="dlgbox"></div></div>
+<div id="toast"></div>
+
+<script>
+/* ============ 基础 ============ */
+const T = new URLSearchParams(location.search).get('t') || '';
+const api = (p, o) => fetch(p + (p.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(T), o)
+  .then(r => r.json());
+const $ = id => document.getElementById(id);
+const esc = s => (s ?? '').toString().replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const num = n => n >= 1e8 ? (n/1e8).toFixed(1)+'亿' : n >= 1e4 ? (n/1e4).toFixed(1)+'万' : (n ?? 0);
+const ago = t => { if(!t) return ''; const x = Date.now()/1000 - t;
+  return x < 3600 ? Math.floor(x/60)+'分钟前' : x < 86400 ? Math.floor(x/3600)+'小时前'
+       : x < 86400*30 ? Math.floor(x/86400)+'天前' : new Date(t*1000).toISOString().slice(0,10); };
+const mb = b => !b ? '未知大小'
+  : (b >= 104857600 ? (b/1048576).toFixed(0) : (b/1048576).toFixed(1)) + ' MB';
+const dlHref = (id, q) => `/api/download?bvid=${encodeURIComponent(id)}&q=${q}&t=${encodeURIComponent(T)}`;
+
+const ICON = {
+  like:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 20.3S4.5 15.6 4.5 10.4A3.9 3.9 0 0 1 12 7.6a3.9 3.9 0 0 1 7.5 2.8c0 5.2-7.5 9.9-7.5 9.9z"/></svg>',
+  likeOn:'<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 20.3S4.5 15.6 4.5 10.4A3.9 3.9 0 0 1 12 7.6a3.9 3.9 0 0 1 7.5 2.8c0 5.2-7.5 9.9-7.5 9.9z"/></svg>',
+  coin:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 8.6v6.8M8.6 12h6.8"/></svg>',
+  star:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 4.2l2.5 5.3 5.8.7-4.3 3.9 1.2 5.7L12 17l-5.2 2.8 1.2-5.7L3.7 10.2l5.8-.7z"/></svg>',
+  starOn:'<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.2l2.5 5.3 5.8.7-4.3 3.9 1.2 5.7L12 17l-5.2 2.8 1.2-5.7L3.7 10.2l5.8-.7z"/></svg>',
+  user:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8.4" r="3.4"/><path d="M5.2 20c0-3.4 3-5.6 6.8-5.6s6.8 2.2 6.8 5.6"/></svg>',
+  userOn:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8.4" r="3.4"/><path d="M5.2 20c0-3.4 3-5.6 6.8-5.6s6.8 2.2 6.8 5.6"/><path d="M17 4.5l1.6 1.6 3-3"/></svg>',
+  play:'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5l11 6.5-11 6.5z"/></svg>',
+  dl:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 4v11M7.8 10.8L12 15l4.2-4.2M5 19.5h14"/></svg>'
+};
+
+let toastTimer;
+function toast(msg, ms){
+  const t = $('toast'); t.textContent = msg; t.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('on'), ms || 2600);
+}
+function dlg(title, html){
+  // 每个弹层都自带标题栏 + 「完成」：之前只能点空白处关，太隐晦
+  $('dlgbox').innerHTML = `<div class="grabber"></div>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+      <h3 style="flex:1;margin:0">${title}</h3>
+      <button class="btn small" onclick="closeDlg()">完成</button>
+    </div>` + html;
+  $('dlg').classList.add('on');
+}
+function closeDlg(){ $('dlg').classList.remove('on'); }
+$('dlg').onclick = e => { if(e.target.id === 'dlg') closeDlg(); };
+window.closeDlg = closeDlg;                       // 弹层里的内联 onclick 用得到
+
+/* ============ 路由（刷新/前后退都要回到原来那页） ============ */
+let currentRoute = '';
+const routeOf = () => decodeURIComponent(location.hash.replace(/^#/, ''));
+function go(route){
+  if(route === currentRoute) return;
+  currentRoute = route;
+  if(routeOf() !== route) location.hash = route;
+  renderRoute(route);
+}
+function renderRoute(route){
+  const i = route.indexOf('/');
+  const kind = i < 0 ? route : route.slice(0, i);
+  const arg = i < 0 ? '' : route.slice(i + 1);
+  if(kind === 'video' && arg) return openVideo(arg);
+  if(kind === 'article' && arg) return openArticle(arg);
+  if(kind === 'user' && arg) return openUser(arg);
+  if(kind === 'history') return openHistory();
+  closeSheet();
+}
+window.addEventListener('hashchange', () => {
+  const r = routeOf();
+  if(r !== currentRoute){ currentRoute = r; renderRoute(r); }
+});
+
+/* ============ 详情页外壳 ============ */
+function showSheet(title){
+  $('stitle').textContent = title;
+  $('sheet').classList.add('on');
+  document.querySelector('.scroller').scrollTop = 0;
+}
+function closeSheet(){ $('sheet').classList.remove('on'); }
+$('back').onclick = () => go('');
+document.addEventListener('keydown', e => { if(e.key === 'Escape'){ go(''); closeDlg(); } });
+
+/* ============ 登录状态 ============ */
+api('/api/me').then(r => {
+  if(!r.ok) return $('me').textContent = '未登录';
+  const d = r.data;
+  $('me').innerHTML = d.isLogin
+    ? `<b>${esc(d.uname)}</b><br>Lv${d.level ?? '?'} · 硬币 ${d.coins}${d.csrf ? '' : ' · 缺 csrf'}`
+    : '未登录<br>只能浏览';
+  if(d.isLogin && !d.csrf) toast('cookie 里没有 bili_jct（CSRF），点赞/投币/收藏/关注都会失败：重跑一次 bili_login.py', 9000);
+});
+
+/* ============ 搜索 ============ */
+let type = 'video', page = 1, lastQ = '';
+const ITEMS = new Map();
+
+$('tabs').onclick = e => {
+  const b = e.target.closest('button'); if(!b) return;
+  type = b.dataset.t;
+  [...$('tabs').children].forEach(x => x.classList.toggle('on', x === b));
+  if(lastQ) run(1);
+};
+$('sf').onsubmit = e => { e.preventDefault(); const q = $('q').value.trim(); if(q) run(1); };
+
+async function run(p){
+  lastQ = $('q').value.trim(); page = p;
+  try { localStorage.setItem('bili.q', JSON.stringify({type, q: lastQ, page: p})); } catch(e){}
+  $('more').hidden = true;
+  if(p === 1) $('list').innerHTML = `<div class="empty"><span class="spin"></span>搜索中</div>`;
+  const r = await api(`/api/search?type=${type}&q=${encodeURIComponent(lastQ)}&page=${p}`);
+  if(!r.ok) return $('list').innerHTML = `<div class="empty">${esc(r.message)}</div>`;
+  const items = r.data.items || [];
+  if(!items.length) return $('list').innerHTML = `<div class="empty">没搜到，换个词试试。</div>`;
+  items.forEach(it => ITEMS.set(it.kind + ':' + it.id, it));
+  const html = `<div class="group">${items.map(row).join('')}</div>`;
+  if(p === 1) $('list').innerHTML = html;
+  else $('list').insertAdjacentHTML('beforeend', html);
+  $('more').hidden = p >= (r.data.pages || 1);
+}
+$('more').onclick = () => run(page + 1);
+
+function row(it){
+  const img = `<img class="thumb${it.kind === 'user' ? ' round' : ''}" loading="lazy"
+      referrerpolicy="no-referrer" src="${esc(it.pic || it.cover)}" alt="">`;
+  if(it.kind === 'video') return `<div class="row" data-k="video" data-id="${esc(it.id)}">${img}
+    <div class="body"><div class="t">${esc(it.title)}</div>
+      <div class="s"><span>${esc(it.author)}</span><span>${esc(it.duration)}</span>
+      <span>播放 ${num(it.play)}</span><span>${ago(it.pubdate)}</span></div></div></div>`;
+  if(it.kind === 'user') return `<div class="row" data-k="user" data-id="${esc(it.id)}">${img}
+    <div class="body"><div class="t">${esc(it.name)}</div>
+      <div class="s"><span>粉丝 ${num(it.fans)}</span><span>投稿 ${num(it.videos)}</span>
+      ${it.level ? `<span>Lv${it.level}</span>` : ''}</div>
+      <div class="s"><span>${esc(it.sign || it.official || '')}</span></div></div></div>`;
+  return `<div class="row" data-k="article" data-id="${esc(it.id)}">${img}
+    <div class="body"><div class="t">${esc(it.title)}</div>
+      <div class="s"><span>${esc(it.author)}</span><span>阅读 ${num(it.view)}</span>
+      <span>评论 ${num(it.reply)}</span></div></div></div>`;
+}
+$('list').onclick = e => {
+  const c = e.target.closest('.row'); if(!c) return;
+  const k = c.dataset.k;
+  go(k === 'video' ? 'video/' + c.dataset.id
+   : k === 'article' ? 'article/' + c.dataset.id : 'user/' + c.dataset.id);
+};
+
+/* ============ 视频详情 ============ */
+function actsHTML(v){
+  const followed = v.follow === 2 || v.follow === 6;
+  return `<div class="acts">
+    <button data-a="like" class="${v.liked ? 'on' : ''}">${v.liked ? ICON.likeOn : ICON.like}点赞
+      <small>${num(v.stat.like)}</small></button>
+    <button data-a="coin" class="${v.coined ? 'on' : ''}">${ICON.coin}投币
+      <small>${v.coined ? '已投 ' + v.coined : num(v.stat.coin)}</small></button>
+    <button data-a="fav" class="${v.favoured ? 'on' : ''}">${v.favoured ? ICON.starOn : ICON.star}收藏
+      <small>${num(v.stat.favorite)}</small></button>
+    <button data-a="follow" class="${followed ? 'on' : ''}">${followed ? ICON.userOn : ICON.user}
+      ${followed ? '已关注' : '关注'}<small>${esc((v.owner.name || '').slice(0, 6))}</small></button>
+  </div>`;
+}
+/* 写完不重新拉取：后台状态接口有延迟，立刻重读会把按钮打回原样，
+   看起来就像「没生效」。直接改本地状态，以写操作成功为准。 */
+function refreshActs(v){
+  const el = $('sbody') && $('sbody').querySelector('.acts');
+  if(el) el.outerHTML = actsHTML(v);
+}
+
+async function openVideo(id){
+  showSheet('视频');
+  $('sbody').innerHTML = `<div class="empty"><span class="spin"></span>读取中</div>`;
+  const r = await api('/api/video?bvid=' + encodeURIComponent(id));
+  if(!r.ok) return $('sbody').innerHTML = `<div class="empty">${esc(r.message)}</div>`;
+  const v = r.data;
+  $('stitle').textContent = v.title || '视频';
+  $('sbody').innerHTML = `
+    <h1>${esc(v.title)}</h1>
+    <img class="hero" referrerpolicy="no-referrer" src="${esc(v.pic)}" alt="">
+    <div class="metaline">
+      <span>播放 ${num(v.stat.view)}</span><span>点赞 ${num(v.stat.like)}</span>
+      <span>硬币 ${num(v.stat.coin)}</span><span>收藏 ${num(v.stat.favorite)}</span>
+      <span>${ago(v.pubdate)}</span>${v.pages > 1 ? `<span>共 ${v.pages} P</span>` : ''}
+    </div>
+    <div class="bvid"><code>${esc(v.id)}</code><span>av${v.aid}</span>
+      <button class="btn small" data-copy="${esc(v.id)}">复制 BV</button></div>
+    <div class="up" data-a="go-up">
+      <img referrerpolicy="no-referrer" src="${esc(v.owner.face)}" alt="">
+      <div class="n"><b>${esc(v.owner.name)}</b><span>UID ${v.owner.mid} · 查看 TA 的投稿 ›</span></div>
+    </div>
+    ${actsHTML(v)}
+    <div class="actlog" id="actlog"></div>
+    <button class="btn block" data-a="play">${ICON.play} 在线预览</button>
+    <div class="player" id="player"></div>
+    <button class="btn block" data-a="dl" style="margin-top:10px">${ICON.dl} 下载（选清晰度）</button>
+    ${v.desc ? `<div class="desc" style="margin-top:12px">${esc(v.desc)}</div>` : ''}
+    <p class="hint"><a href="${esc(v.url)}" target="_blank" rel="noopener">在 B 站打开原页 ›</a>
+      <button class="btn small" data-a="diag" style="margin-left:8px">操作诊断</button></p>
+    <div class="section-title">评论 ${num(v.stat.reply)}</div>
+    <div id="cmts"></div>
+    <button class="btn block" id="cmore" hidden style="margin-top:12px">加载更多评论</button>`;
+  $('sbody').onclick = e => onAct(e, v);
+  loadComments(v.aid, 1, true);
+}
+
+async function onAct(e, v){
+  const b = e.target.closest('[data-a],[data-copy]');
+  if(!b) return;
+  if(b.dataset.copy){
+    (navigator.clipboard ? navigator.clipboard.writeText(b.dataset.copy) : Promise.reject())
+      .then(() => toast('已复制 ' + b.dataset.copy), () => toast(b.dataset.copy));
+    return;
+  }
+  const a = b.dataset.a;
+  if(a === 'go-up') return go('user/' + v.owner.mid);
+  if(a === 'play') return playVideo(v);
+  if(a === 'dl') return dlDialog(v);
+  if(a === 'diag') return runDiag(v);
+  if(a === 'coin') return coinDialog(v);
+  if(a === 'fav') return favDialog(v);
+
+  const body = a === 'like' ? {act:'like', id:v.id, on: !v.liked}
+             : a === 'follow' ? {act:'follow', fid:v.owner.mid, on: !(v.follow === 2 || v.follow === 6)} : null;
+  if(!body) return;
+  b.disabled = true;
+  const r = await api('/api/do', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body)});
+  b.disabled = false;
+  if(!r.ok){
+    // B 站的状态传播有几秒延迟：刚赞完立刻取消，它会回 65004「未点赞过」。
+    // 这类报错说明目标状态已经达成，当成成功，不要提示失败。
+    const msg = r.message || '';
+    const benign = a === 'like'
+      ? (!body.on && msg.includes('未点赞过')) || (body.on && msg.includes('已点赞'))
+      : (body.on && msg.includes('已经关注')) || (!body.on && msg.includes('未关注'));
+    if(!benign){
+      setLog('失败 code=' + (r.code ?? '') + ' ' + msg, 'err');
+      return toast('操作失败 ' + (r.code ?? '') + ' ' + msg, 5000);
+    }
+    setLog('已达成目标状态（B 站状态滞后，报错可忽略）');
+  } else {
+    setLog('成功 code=' + (r.code ?? 0) + ' ' + (r.message || 'OK'));
+  }
+  if(a === 'like'){
+    v.liked = body.on;
+    v.stat.like = (v.stat.like || 0) + (body.on ? 1 : -1);
+    toast(body.on ? '已点赞' : '已取消点赞');
+  } else {
+    v.follow = body.on ? 2 : 0;
+    toast(body.on ? '已关注 ' + v.owner.name : '已取消关注');
+  }
+  refreshActs(v);
+}
+
+/* 把最后一次写操作的结果留在页面上：toast 一闪而过，出问题时根本来不及看。 */
+function setLog(text, cls){
+  const el = $('actlog'); if(!el) return;
+  el.textContent = text;
+  el.style.color = cls === 'ok' ? 'var(--success)' : cls === 'err' ? 'var(--danger)' : 'var(--label3)';
+}
+
+/* 操作诊断：让服务器把 before → 写 → after 的原始响应全吐出来，原样贴在页面上（可长按复制）。
+   只做一对可逆操作，净效果为零。 */
+async function runDiag(v){
+  setLog('诊断中，约 8 秒（两次写操作成对，不会改变最终状态）…');
+  const r = await api('/api/diagnose?bvid=' + encodeURIComponent(v.id));
+  if(!r.ok) return setLog('诊断接口失败：' + (r.code ?? '') + ' ' + (r.message || ''), 'err');
+  const d = r.data;
+  setLog(d.restored ? '诊断完成，状态已复原。数据在下方，长按可以复制' : '诊断完成，但状态可能未复原',
+         d.restored ? 'ok' : 'err');
+  const old = document.getElementById('diagout'); if(old) old.remove();
+  const box = document.createElement('pre');
+  box.id = 'diagout';
+  box.textContent = JSON.stringify(d, null, 1);
+  box.style.cssText = 'font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-all;'
+    + 'background:var(--card);border-radius:12px;padding:10px;margin:8px 0 12px;user-select:text';
+  const anchor = $('actlog');
+  anchor.parentNode.insertBefore(box, anchor.nextSibling);
+}
+
+function playVideo(v){
+  const box = $('player'); if(!box) return;
+  box.innerHTML = `<video controls playsinline preload="metadata" src="${dlHref(v.id, 127)}"
+      style="margin-top:12px"></video>
+    <p class="hint">服务端合并后边下边推，画质取账号上限（一般是 1080P）。
+      这种流没有文件长度，所以进度条不能拖；要拖进度或看原始画质请下载。</p>`;
+}
+
+function coinDialog(v){
+  const left = (v.stat.coin || 0);
+  dlg('给这个视频投币', `
+    <div class="sub">硬币不可撤回。当前该视频已有 ${num(left)} 枚硬币。${
+      v.coined ? '你已经投过了，不能重复投。' : ''}</div>
+    ${v.coined ? '' : `<label class="check"><input type="radio" name="cn" value="1" checked> 投 1 个硬币</label>
+    <label class="check"><input type="radio" name="cn" value="2"> 投 2 个硬币</label>`}
+    <button class="btn primary block" id="docoin" style="margin-top:16px"
+      ${v.coined ? 'disabled' : ''}>确认投币</button>`);
+  const btn = $('docoin'); if(!btn || v.coined) return;
+  btn.onclick = async () => {
+    const n = +document.querySelector('input[name=cn]:checked').value;
+    closeDlg(); 
+    const r = await api('/api/do', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({act:'coin', id:v.id, n})});
+    if(!r.ok) return toast('投币失败 ' + (r.code ?? '') + ' ' + (r.message || ''), 5000);
+    v.coined = n; v.stat.coin = (v.stat.coin || 0) + n;
+    toast('已投 ' + n + ' 个硬币'); refreshActs(v);
+  };
+}
+
+async function favDialog(v){
+  const r = await api('/api/folders');
+  if(!r.ok) return toast(r.message);
+  const fs = r.data || [];
+  if(!fs.length) return toast('没有可用的收藏夹');
+  dlg('收藏到', `
+    <div class="sub">当前${v.favoured ? '已收藏，再选会追加到其他收藏夹' : '未收藏'}</div>
+    ${fs.map(f => `<label class="check"><input type="checkbox" value="${f.id}"> ${esc(f.title)}
+      <span style="margin-left:auto;color:var(--label3);font-size:13px">${f.count} 个</span></label>`).join('')}
+    <button class="btn primary block" id="dofav" style="margin-top:16px">加入所选</button>`);
+  $('dofav').onclick = async () => {
+    const ids = [...document.querySelectorAll('#dlgbox input:checked')].map(x => x.value).join(',');
+    if(!ids) return toast('先勾一个收藏夹');
+    closeDlg();
+    const r2 = await api('/api/do', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({act:'fav', aid:v.aid, add:ids})});
+    if(!r2.ok) return toast('收藏失败 ' + (r2.code ?? '') + ' ' + (r2.message || ''), 5000);
+    v.favoured = true; v.stat.favorite = (v.stat.favorite || 0) + 1;
+    toast('已收藏'); refreshActs(v);
+  };
+}
+
+/* ============ 下载 ============ */
+async function dlDialog(v){
+  dlg('下载', `<div class="sub"><span class="spin"></span>读取可用清晰度</div>`);
+  const r = await api('/api/formats?bvid=' + encodeURIComponent(v.id));
+  if(!r.ok) return dlg('下载', `<div class="sub">${esc(r.message)}</div>`);
+  const d = r.data;
+  if(!d.items.length) return dlg('下载', `<div class="sub">这个视频没拿到可下载的流。</div>`);
+  dlg('下载 ' + esc(v.title.slice(0, 16)), `
+    <div class="sub">估算大小 = 码率 × 时长。服务器合并音视频后推给你，
+      文件名是「标题 [清晰度].mp4」。</div>
+    ${d.items.map(x => `<div class="grid-row">
+      <div class="k"><b>${esc(x.label)}</b>
+        <small>${x.width}×${x.height}${x.fps > 30 ? ' · ' + x.fps + 'fps' : ''} · ${esc(x.codec)} · 约 ${mb(x.bytes)}</small>
+      </div>
+      <a class="btn small primary" href="${dlHref(v.id, x.q)}">下载</a>
+    </div>`).join('')}
+    <p class="hint">点下载后由系统浏览器接管：iOS 进「文件 → 下载」，安卓进通知栏或 Download 目录。</p>`);
+}
+
+/* ============ UP主主页 ============ */
+async function openUser(mid, pn){
+  pn = pn || 1;
+  showSheet('UP主');
+  if(pn === 1) $('sbody').innerHTML = `<div class="empty"><span class="spin"></span>读取中</div>`;
+  const r = await api(`/api/user?mid=${encodeURIComponent(mid)}&page=${pn}`);
+  if(!r.ok) return $('sbody').innerHTML = `<div class="empty">${esc(r.message)}</div>`;
+  const u = r.data;
+  $('stitle').textContent = u.name || ('UID ' + mid);
+  const rel = pn === 1 && ITEMS.has('user:' + mid)
+    ? null : null;                                  // 关注状态单独查，见下
+  if(pn === 1){
+    const rr = await api('/api/relation?fid=' + encodeURIComponent(mid));
+    const followed = rr.ok && (rr.data.attribute === 2 || rr.data.attribute === 6);
+    $('sbody').innerHTML = `
+      <div class="up" style="cursor:default">
+        <img referrerpolicy="no-referrer" src="${esc(u.face)}" alt="">
+        <div class="n"><b>${esc(u.name || 'UID ' + mid)}</b>
+          <span>UID ${esc(mid)} · 粉丝 ${num(u.fans)} · 投稿 ${num(u.total)}${u.level ? ' · Lv' + u.level : ''}</span></div>
+      </div>
+      ${u.sign ? `<div class="desc">${esc(u.sign)}</div>` : ''}
+      <button class="btn block ${followed ? '' : 'primary'}" id="ufollow">${followed ? '已关注（点击取关）' : '关注'}</button>
+      <p class="hint">这里没有动态流和推荐，只有 TA 的投稿列表。</p>
+      <div class="section-title">投稿</div>
+      <div id="ulist"><div class="group">${u.items.map(row).join('')}</div></div>
+      <button class="btn block" id="umore" ${pn >= u.pages ? 'hidden' : ''} style="margin-top:12px">加载更多投稿</button>
+      <p class="hint"><a href="https://space.bilibili.com/${esc(mid)}" target="_blank" rel="noopener">在 B 站打开主页 ›</a></p>`;
+    $('ufollow').onclick = async e => {
+      const on = !followed; e.target.disabled = true;
+      const res = await api('/api/do', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({act:'follow', fid:mid, on})});
+      e.target.disabled = false;
+      if(!res.ok) return toast(res.message);
+      toast(on ? '已关注' : '已取消关注');
+      openUser(mid, 1);
+    };
+    $('umore').onclick = () => openUser(mid, pn + 1);
+  } else {
+    $('ulist').insertAdjacentHTML('beforeend', `<div class="group">${u.items.map(row).join('')}</div>`);
+    $('umore').hidden = pn >= u.pages;
+  }
+  $('sbody').onclick = e => {
+    const c = e.target.closest('.row'); if(!c) return;
+    if(c.dataset.k === 'video') go('video/' + c.dataset.id);
+    else if(c.dataset.k === 'article') go('article/' + c.dataset.id);
+  };
+}
+
+/* ============ 专栏 ============ */
+async function openArticle(id){
+  showSheet('专栏');
+  $('sbody').innerHTML = `<div class="empty"><span class="spin"></span>读取中</div>`;
+  const r = await api('/api/article?id=' + encodeURIComponent(id));
+  if(!r.ok) return $('sbody').innerHTML = `<div class="empty">${esc(r.message)}</div>`;
+  const a = r.data;
+  $('stitle').textContent = a.title || '专栏';
+  $('sbody').innerHTML = `
+    <h1>${esc(a.title)}</h1>
+    <div class="metaline"><span>${esc(a.author.name || '')}</span><span>阅读 ${num(a.stat.view)}</span>
+      <span>点赞 ${num(a.stat.like)}</span><span>评论 ${num(a.stat.reply)}</span></div>
+    <div class="bvid"><code>cv${esc(id)}</code>
+      <span>UID ${a.author.mid}</span></div>
+    <div class="article">${a.content || '<i>（没有正文）</i>'}</div>
+    <p class="hint"><a href="${esc(a.url)}" target="_blank" rel="noopener">在 B 站打开原页 ›</a></p>
+    <div class="section-title">评论</div>
+    <div id="cmts"></div>
+    <button class="btn block" id="cmore" hidden style="margin-top:12px">加载更多评论</button>`;
+  loadComments(id, 12, true);
+}
+
+/* ============ 评论 ============ */
+let cState = {oid:null, type:1, pn:0};
+async function loadComments(oid, ctype, reset){
+  if(reset){ cState = {oid, type:ctype, pn:0}; const b = $('cmts'); if(b) b.innerHTML = ''; }
+  cState.pn++;
+  const r = await api(`/api/comments?oid=${oid}&type=${ctype}&pn=${cState.pn}`);
+  const box = $('cmts'); if(!box) return;
+  if(!r.ok) return box.innerHTML = `<div class="empty">${esc(r.message)}</div>`;
+  const items = r.data.items || [];
+  box.insertAdjacentHTML('beforeend', items.length ? items.map(c => `
+    <div class="cmt">
+      <img referrerpolicy="no-referrer" src="${esc(c.face)}" alt="">
+      <div class="c"><div class="u">${esc(c.uname)} · ${ago(c.ctime)}${c.location ? ' · ' + esc(c.location) : ''}</div>
+        <div class="m">${esc(c.message)}</div>
+        <div class="s"><span>赞 ${num(c.like)}</span>${c.rcount ? `<span>${c.rcount} 条回复</span>` : ''}</div>
+      </div></div>`).join('') : '<div class="empty">还没有评论</div>');
+  const btn = $('cmore');
+  if(btn){
+    btn.hidden = !items.length || r.data.is_end;
+    btn.onclick = () => loadComments(oid, ctype, false);
+  }
+}
+
+/* ============ 观看历史 ============ */
+const dstr = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+$('histbtn').onclick = () => go('history');
+
+function openHistory(){
+  showSheet('观看历史');
+  const end = new Date(), start = new Date(end.getTime() - 6 * 864e5);
+  $('sbody').innerHTML = `
+    <div class="seg" id="hpreset">
+      <button data-d="0">今天</button><button data-d="7" class="on">近7天</button>
+      <button data-d="30">近30天</button><button data-d="365">近一年</button>
+      <button data-d="all">不限</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin:12px 0">
+      <input class="field" type="date" id="hstart" value="${dstr(start)}" style="margin:0">
+      <span style="color:var(--label3)">→</span>
+      <input class="field" type="date" id="hend" value="${dstr(end)}" style="margin:0">
+    </div>
+    <select class="field" id="hpages" style="margin:0 0 12px">
+      <option value="5" selected>最多翻 5 页（约 150 条，快）</option>
+      <option value="15">最多翻 15 页（约 450 条）</option>
+      <option value="40">最多翻 40 页（约 1200 条）</option>
+      <option value="100">最多翻 100 页（很慢）</option>
+    </select>
+    <button class="btn primary block" id="hgo">查询</button>
+    <div style="display:flex;align-items:center;gap:12px;margin:16px 2px 4px">
+      <span id="hcount" style="font-size:13px;color:var(--label3);flex:1"></span>
+      <a class="btn small" id="hexport">导出 JSON</a>
+    </div>
+    <div id="hlist"></div>`;
+  $('hpreset').onclick = e => {
+    const b = e.target.closest('button'); if(!b) return;
+    [...$('hpreset').children].forEach(x => x.classList.toggle('on', x === b));
+    const d = b.dataset.d;
+    $('hend').value = dstr(new Date());
+    $('hstart').value = d === 'all' ? '' : dstr(new Date(Date.now() - (+d) * 864e5));
+    loadHistory();
+  };
+  $('hgo').onclick = () => loadHistory();
+  loadHistory();
+}
+
+function hURL(exp, token){
+  const p = new URLSearchParams({start: $('hstart').value, end: $('hend').value,
+    pages: $('hpages').value});
+  if(token) p.set('t', T);
+  return '/api/' + (exp ? 'history/export' : 'history') + '?' + p;
+}
+
+async function loadHistory(){
+  $('hlist').innerHTML = `<div class="empty"><span class="spin"></span>读取历史记录，翻页多时要几十秒</div>`;
+  $('hcount').textContent = '';
+  $('hexport').href = hURL(true, true);
+  const r = await api(hURL(false));
+  const box = $('hlist');
+  if(!r.ok) return box.innerHTML = `<div class="empty">${esc(r.message)}</div>`;
+  const d = r.data, items = d.items || [];
+  $('hcount').textContent = `${d.count} 条 · 翻了 ${d.pages} 页`
+    + (d.truncated ? ' · 未取完，调大页数' : '');
+  if(!items.length) return box.innerHTML = `<div class="empty">这个时间段没有记录。</div>`;
+  box.innerHTML = `<div class="group">${items.map(it => {
+    const k = it.business === 'archive' && it.bvid ? `data-k="video" data-id="${esc(it.bvid)}"`
+      : String(it.business).startsWith('article') ? `data-k="article" data-id="${esc(it.oid)}"` : '';
+    return `<div class="row" ${k}>
+      <div class="body"><div class="t">${esc(it.title)}</div>
+        <div class="s"><span>${esc(it.author || '—')}</span><span>${esc(it.view_at_local)}</span></div>
+      </div><span class="chev">›</span></div>`;
+  }).join('')}</div>`;
+  box.onclick = e => {
+    const c = e.target.closest('.row'); if(!c || !c.dataset.k) return;
+    go(c.dataset.k === 'video' ? 'video/' + c.dataset.id : 'article/' + c.dataset.id);
+  };
+}
+
+/* ============ 启动 ============ */
+try {
+  const s = JSON.parse(localStorage.getItem('bili.q') || 'null');
+  if(s && s.q){
+    type = s.type; $('q').value = s.q;
+    [...$('tabs').children].forEach(x => x.classList.toggle('on', x.dataset.t === type));
+    run(s.page || 1);
+  }
+} catch(e){}
+currentRoute = routeOf();
+renderRoute(currentRoute);
+</script>
+</body>
+</html>

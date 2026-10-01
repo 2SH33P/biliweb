@@ -1,0 +1,5 @@
+# 登录态：任何情况下都不要提交
+cookies.txt
+*.tar.gz
+__pycache__/
+*.pyc
