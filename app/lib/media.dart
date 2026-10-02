@@ -193,7 +193,7 @@ class BiliMedia {
 
   /// 下载一个 URL 到文件，回报 0..1 进度
   Future<File> fetch(String url, String path, {void Function(double)? onProgress,
-    void Function()? isCancelled}) async {
+    bool Function()? isCancelled}) async {
     final req = http.Request('GET', Uri.parse(url));
     req.headers.addAll(kMediaHeaders);
     final res = await http.Client().send(req);

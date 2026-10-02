@@ -11,7 +11,10 @@ import pathlib
 import re
 import sys
 
-PERMS = """    <!-- 后台播放：前台服务 + 唤醒锁 + 通知 -->
+PERMS = """    <!-- 必须手动加：flutter create 只把 INTERNET 写进 debug/profile 的 manifest，
+         release 包没有它，所有网络请求都会变成 "Failed host lookup"（DNS 解析失败）。 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- 后台播放：前台服务 + 唤醒锁 + 通知 -->
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
@@ -44,7 +47,7 @@ def patch_manifest(root: pathlib.Path) -> None:
         return
     s = mf.read_text()
     changed = []
-    if "FOREGROUND_SERVICE" not in s:
+    if "android.permission.INTERNET" not in s or "FOREGROUND_SERVICE" not in s:
         s = s.replace("    <application", PERMS + "    <application", 1)
         changed.append("权限")
     if "audioservice.AudioService" not in s:
