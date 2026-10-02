@@ -43,14 +43,19 @@ jobs:
         shell: bash
         run: |
           set +e
-          flutter analyze 2>&1 | tee analyze.log
+          flutter analyze --machine | tee analyze.log
           status=${PIPESTATUS[0]}
-          {
-            echo '## Flutter analyze'
-            echo '```text'
-            cat analyze.log
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          python3 - <<'PY'
+          from pathlib import Path
+          for raw in Path('analyze.log').read_text(errors='replace').splitlines():
+              p = raw.split('|', 7)
+              if len(p) < 8 or p[0] not in ('ERROR', 'WARNING', 'INFO'):
+                  continue
+              severity, _, code, file, line, col, _, message = p
+              level = {'ERROR': 'error', 'WARNING': 'warning', 'INFO': 'notice'}[severity]
+              message = message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+              print(f'::{level} file={file},line={line},col={col},title={code}::{message}')
+          PY
           exit $status
 
   apk:
