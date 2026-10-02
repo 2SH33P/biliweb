@@ -326,12 +326,20 @@ class BiliApi {
         {};
     final stats = info['stats'] as Map<String, dynamic>? ?? {};
     final author = info['author'] as Map<String, dynamic>? ?? {};
+    final rawContent = (d['content'] ?? '').toString();
+    final images = <String>[];
+    final imageRe = RegExp(r'''<img[^>]+(?:data-src|src)=["']([^"']+)''', caseSensitive: false);
+    for (final m in imageRe.allMatches(rawContent)) {
+      final u = _https(m.group(1));
+      if (u.isNotEmpty && !images.contains(u)) images.add(u);
+    }
     return {
       'id': id,
       'title': d['title'] ?? '',
       // 专栏正文是上游给的 HTML。这里直接转纯文本，不引 HTML 渲染库
       //（少一个依赖，也就少一处 XSS 面）。想看排版就点原页。
-      'content': _plainText(d['content']),
+      'content': _plainText(rawContent),
+      'images': images,
       'author': {'mid': author['mid'], 'name': author['name']},
       'stat': {
         'view': stats['view'],

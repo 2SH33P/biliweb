@@ -1250,6 +1250,7 @@ class ArticlePage extends StatefulWidget {
 class _ArticlePageState extends State<ArticlePage> {
   Map<String, dynamic>? _a;
   String? _error;
+  bool _downloading = false;
 
   @override
   void initState() {
@@ -1266,11 +1267,53 @@ class _ArticlePageState extends State<ArticlePage> {
     }
   }
 
+  void _preview(String url) {
+    showDialog<void>(context: context, builder: (_) => Dialog(
+      insetPadding: const EdgeInsets.all(12),
+      child: InteractiveViewer(minScale: .5, maxScale: 5,
+        child: Image.network(url, headers: kMediaHeaders, fit: BoxFit.contain)),
+    ));
+  }
+
+  Future<void> _downloadImage(String url, int index, {bool quiet = false}) async {
+    final a = _a; if (a == null) return;
+    try {
+      final dir = await BiliMedia.downloadDir();
+      final name = BiliMedia.safeName((a['title'] ?? 'article').toString());
+      final path = '${dir.path}/$name-${index + 1}.jpg';
+      await widget.state.media.fetch(url, path);
+      if (!quiet && mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已保存 $path')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('下载失败：$e')));
+    }
+  }
+
+  Future<void> _downloadAll() async {
+    final images = ((_a?['images'] as List?) ?? const []).cast<String>();
+    if (images.isEmpty || _downloading) return;
+    setState(() => _downloading = true);
+    for (var i = 0; i < images.length; i++) { await _downloadImage(images[i], i, quiet: true); }
+    if (mounted) {
+      setState(() => _downloading = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已下载 ${images.length} 张图片')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final a = _a;
     return Scaffold(
-      appBar: AppBar(title: const Text('专栏')),
+      appBar: AppBar(
+        title: const Text('专栏'),
+        actions: [if (((a?['images'] as List?) ?? const []).isNotEmpty)
+          IconButton(
+            tooltip: '下载全部图片', onPressed: _downloading ? null : _downloadAll,
+            icon: _downloading
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.download_for_offline_outlined),
+          ),
+        ],
+      ),
       body: _error != null
           ? Center(child: Text(_error!))
           : a == null
@@ -1288,6 +1331,24 @@ class _ArticlePageState extends State<ArticlePage> {
                     const Divider(height: 24),
                     SelectableText((a['content'] ?? '').toString(),
                         style: const TextStyle(height: 1.7)),
+                    ...((a['images'] as List?) ?? const []).cast<String>().asMap().entries.map((e) =>
+                      Padding(
+                        padding: const EdgeInsets.only(top: 14),
+                        child: Stack(alignment: Alignment.topRight, children: [
+                          InkWell(
+                            onTap: () => _preview(e.value),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Image.network(e.value, headers: kMediaHeaders, fit: BoxFit.fitWidth),
+                            ),
+                          ),
+                          IconButton.filledTonal(
+                            tooltip: '下载图片',
+                            onPressed: () => _downloadImage(e.value, e.key),
+                            icon: const Icon(Icons.download),
+                          ),
+                        ]),
+                      )),
                     const Divider(height: 24),
                     TextButton(
                       onPressed: () => launchUrl(Uri.parse(a['url'].toString()),

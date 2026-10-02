@@ -131,11 +131,33 @@ jobs:
           path: app/biliweb-ios-unsigned.ipa
           if-no-files-found: error
 
+  macos:
+    name: 构建 macOS
+    needs: analyze
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter create --platforms=macos --org com.biliweb --project-name biliweb .
+      - run: flutter pub get
+      - run: flutter build macos --release
+      - name: 打包 macOS app
+        shell: bash
+        run: ditto -c -k --sequesterRsrc --keepParent build/macos/Build/Products/Release/biliweb.app biliweb-macos.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: biliweb-macos
+          path: app/biliweb-macos.zip
+          if-no-files-found: error
+
   # 只有推 v* tag 才发 Release；ci-* tag 只做全平台构建验证。
   release:
     name: 发布 Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [apk, windows, ios]
+    needs: [apk, windows, ios, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -152,6 +174,10 @@ jobs:
         with:
           name: biliweb-ios-unsigned
           path: dist/ios
+      - uses: actions/download-artifact@v4
+        with:
+          name: biliweb-macos
+          path: dist/macos
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
@@ -159,3 +185,4 @@ jobs:
             dist/apk/*.apk
             dist/windows/biliweb-windows.zip
             dist/ios/biliweb-ios-unsigned.ipa
+            dist/macos/biliweb-macos.zip
