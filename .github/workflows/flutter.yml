@@ -29,6 +29,8 @@ jobs:
   analyze:
     name: 静态检查
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -40,23 +42,23 @@ jobs:
       # 后台播放要改 AndroidManifest（前台服务 + 权限）和 minSdk，见脚本注释
       - run: python3 ../.github/scripts/patch_platform.py android
       - name: Flutter analyze
+        id: analyzer
+        continue-on-error: true
         shell: bash
         run: |
           set +e
-          flutter analyze --machine 2>&1 | tee analyze.log
-          status=${PIPESTATUS[0]}
-          python3 - <<'PY'
-          from pathlib import Path
-          for raw in Path('analyze.log').read_text(errors='replace').splitlines():
-              p = raw.split('|', 7)
-              if len(p) < 8 or p[0] not in ('ERROR', 'WARNING', 'INFO'):
-                  continue
-              severity, _, code, file, line, col, _, message = p
-              level = {'ERROR': 'error', 'WARNING': 'warning', 'INFO': 'notice'}[severity]
-              message = message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-              print(f'::{level} file={file},line={line},col={col},title={code}::{message}')
-          PY
-          exit $status
+          flutter analyze --machine 2>&1 | tee ../.github/analyze.log
+          exit ${PIPESTATUS[0]}
+      - name: Publish analyzer diagnostics
+        if: steps.analyzer.outcome == 'failure'
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -f ../.github/analyze.log
+          git commit -m "ci: publish analyzer diagnostics"
+          git push origin HEAD:refs/heads/ci-analyze-log --force
+          exit 1
 
   apk:
     name: 构建 APK
