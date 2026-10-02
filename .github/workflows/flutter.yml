@@ -7,12 +7,6 @@ name: flutter
 # GitHub 不对 tag 推送评估 paths 过滤，tag 会正常触发分析/构建。
 on:
   push:
-    branches:
-      - '**'
-    paths:
-      - 'app/**'
-      - '.github/scripts/**'
-      - '.github/workflows/flutter.yml'
     tags:
       - 'v*'
   pull_request:
@@ -71,8 +65,6 @@ jobs:
     name: 构建 Windows
     needs: analyze
     runs-on: windows-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -84,23 +76,18 @@ jobs:
       - name: 替换 Windows 图标
         shell: pwsh
         run: Copy-Item ../.github/assets/icon/biliweb.ico windows/runner/resources/app_icon.ico -Force
-      - name: 构建 Windows
-        id: windows_build
-        continue-on-error: true
+      - name: 构建 Windows（失败自动重试一次）
         shell: pwsh
         run: |
-          flutter build windows --release -v *>&1 | Tee-Object -FilePath ../.github/windows-build.log
-          exit $LASTEXITCODE
-      - name: 发布 Windows 构建诊断
-        if: steps.windows_build.outcome == 'failure'
-        shell: pwsh
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add -f ../.github/windows-build.log
-          git commit -m "ci: publish Windows build diagnostics"
-          git push origin HEAD:refs/heads/ci-windows-log --force
-          exit 1
+          flutter build windows --release
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "首次构建失败，清理后重试"
+            flutter clean
+            flutter pub get
+            Copy-Item ../.github/assets/icon/biliweb.ico windows/runner/resources/app_icon.ico -Force
+            flutter build windows --release
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - name: 打包成 zip（exe 不能单独运行，需要同目录的 dll 和数据文件）
         working-directory: app
         shell: pwsh
