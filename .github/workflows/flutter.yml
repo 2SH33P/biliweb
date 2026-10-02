@@ -43,7 +43,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          flutter analyze --machine | tee analyze.log
+          flutter analyze --machine 2>&1 | tee analyze.log
           status=${PIPESTATUS[0]}
           python3 - <<'PY'
           from pathlib import Path
