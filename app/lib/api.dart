@@ -15,8 +15,6 @@ const String kUserAgent =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
     '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
-const String _api = 'https://api.bilibili.com';
-
 const List<int> _mixinTab = [
   46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49,
   33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40,
@@ -39,6 +37,9 @@ class BiliException implements Exception {
 }
 
 class BiliApi {
+  /// 接口根地址（media.dart 也要用）
+  static const String apiBase = 'https://api.bilibili.com';
+
   BiliApi({Map<String, String>? cookies}) {
     if (cookies != null) _cookies.addAll(cookies);
   }
@@ -180,7 +181,7 @@ class BiliApi {
   /// 补 buvid3/buvid4 设备指纹，写操作被风控的概率会低一些
   Future<void> fetchBuvid() async {
     try {
-      final d = (await get('$_api/x/frontend/finger/spi', {}))['data']
+      final d = (await get('${BiliApi.apiBase}/x/frontend/finger/spi', {}))['data']
           as Map<String, dynamic>?;
       if (d == null) return;
       if ((d['b_3'] ?? '').toString().isNotEmpty) _cookies['buvid3'] = d['b_3'].toString();
@@ -196,7 +197,7 @@ class BiliApi {
     if (!fresh && DateTime.now().difference(_navAt).inSeconds < 60 && _nav.isNotEmpty) {
       return _nav;
     }
-    _nav = (await get('$_api/x/web-interface/nav', {}))['data']
+    _nav = (await get('${BiliApi.apiBase}/x/web-interface/nav', {}))['data']
             as Map<String, dynamic>? ??
         {};
     _navAt = DateTime.now();
@@ -216,7 +217,7 @@ class BiliApi {
 
   Future<Map<String, dynamic>> search(String type, String q, int page) async {
     final r = await get(
-        '$_api/x/web-interface/wbi/search/type',
+        '${BiliApi.apiBase}/x/web-interface/wbi/search/type',
         {'search_type': type, 'keyword': q, 'page': page},
         wbi: true);
     final d = r['data'] as Map<String, dynamic>? ?? {};
@@ -268,23 +269,23 @@ class BiliApi {
   }
 
   Future<Map<String, dynamic>> video(String bvid) async {
-    final v = (await get('$_api/x/web-interface/view', {'bvid': bvid}))['data']
+    final v = (await get('${BiliApi.apiBase}/x/web-interface/view', {'bvid': bvid}))['data']
             as Map<String, dynamic>? ??
         {};
     Map<String, dynamic> rel = {};
     var favoured = false;
     var follow = 0;
     if (isLogin) {
-      rel = (await get('$_api/x/web-interface/archive/relation', {'bvid': bvid}))['data']
+      rel = (await get('${BiliApi.apiBase}/x/web-interface/archive/relation', {'bvid': bvid}))['data']
               as Map<String, dynamic>? ??
           {};
-      favoured = ((await get('$_api/x/v2/fav/video/favoured', {'aid': v['aid']}))['data']
+      favoured = ((await get('${BiliApi.apiBase}/x/v2/fav/video/favoured', {'aid': v['aid']}))['data']
                   as Map<String, dynamic>? ??
               {})['favoured'] ==
           true;
       final mid = (v['owner'] as Map<String, dynamic>? ?? {})['mid'];
       if (mid != null) {
-        follow = ((await get('$_api/x/relation', {'fid': mid}))['data']
+        follow = ((await get('${BiliApi.apiBase}/x/relation', {'fid': mid}))['data']
                 as Map<String, dynamic>? ??
             {})['attribute'] as int? ?? 0;
       }
@@ -313,10 +314,10 @@ class BiliApi {
   }
 
   Future<Map<String, dynamic>> article(String id) async {
-    final d = (await get('$_api/x/article/view', {'id': id}))['data']
+    final d = (await get('${BiliApi.apiBase}/x/article/view', {'id': id}))['data']
             as Map<String, dynamic>? ??
         {};
-    final info = (await get('$_api/x/article/viewinfo', {'id': id}))['data']
+    final info = (await get('${BiliApi.apiBase}/x/article/viewinfo', {'id': id}))['data']
             as Map<String, dynamic>? ??
         {};
     final stats = info['stats'] as Map<String, dynamic>? ?? {};
@@ -339,7 +340,7 @@ class BiliApi {
 
   /// 评论：只能用传统接口，游标版不认 pn
   Future<Map<String, dynamic>> comments(String oid, int type, int pn) async {
-    final d = (await get('$_api/x/v2/reply',
+    final d = (await get('${BiliApi.apiBase}/x/v2/reply',
             {'type': type, 'oid': oid, 'pn': pn, 'sort': 2}))['data']
             as Map<String, dynamic>? ??
         {};
@@ -363,23 +364,23 @@ class BiliApi {
   }
 
   Future<int> relation(String fid) async {
-    final d = (await get('$_api/x/relation', {'fid': fid}))['data']
+    final d = (await get('${BiliApi.apiBase}/x/relation', {'fid': fid}))['data']
             as Map<String, dynamic>? ??
         {};
     return d['attribute'] as int? ?? 0;
   }
 
   Future<Map<String, dynamic>> user(String mid, int pn) async {
-    final d = (await get('$_api/x/space/wbi/acc/info',
+    final d = (await get('${BiliApi.apiBase}/x/space/wbi/acc/info',
             {'mid': mid, 'platform': 'web', 'web_location': 1550101},
             wbi: true))['data'] as Map<String, dynamic>? ?? {};
     Map<String, dynamic> st = {};
     try {
-      st = (await get('$_api/x/relation/stat', {'vmid': mid}))['data']
+      st = (await get('${BiliApi.apiBase}/x/relation/stat', {'vmid': mid}))['data']
               as Map<String, dynamic>? ??
           {};
     } catch (_) {}
-    final r = (await get('$_api/x/space/wbi/arc/search',
+    final r = (await get('${BiliApi.apiBase}/x/space/wbi/arc/search',
             {'mid': mid, 'ps': 30, 'pn': pn, 'order': 'pubdate',
              'platform': 'web', 'web_location': 1550101},
             wbi: true))['data'] as Map<String, dynamic>? ?? {};
@@ -415,7 +416,7 @@ class BiliApi {
 
   Future<List<Map<String, dynamic>>> folders() async {
     final mid = (await nav())['mid'];
-    final d = (await get('$_api/x/v3/fav/folder/created/list-all', {'up_mid': mid}))['data']
+    final d = (await get('${BiliApi.apiBase}/x/v3/fav/folder/created/list-all', {'up_mid': mid}))['data']
             as Map<String, dynamic>? ??
         {};
     return ((d['list'] as List?) ?? [])
@@ -446,7 +447,7 @@ class BiliApi {
         params['view_at'] = cur['view_at'];
         params['business'] = cur['business'] ?? '';
       }
-      final resp = await get('$_api/x/web-interface/history/cursor', params);
+      final resp = await get('${BiliApi.apiBase}/x/web-interface/history/cursor', params);
       final data = resp['data'] as Map<String, dynamic>? ?? {};
       final list = data['list'] as List? ?? [];
       if (list.isEmpty) {
@@ -488,17 +489,17 @@ class BiliApi {
   // ---------- 写接口 ----------
 
   Future<void> like(String bvid, bool on) => post(
-      '$_api/x/web-interface/archive/like',
+      '${BiliApi.apiBase}/x/web-interface/archive/like',
       {'bvid': bvid, 'like': on ? '1' : '2', 'csrf': _cookies['bili_jct'] ?? ''});
 
-  Future<void> coin(String bvid, int n) => post('$_api/x/web-interface/coin/add',
+  Future<void> coin(String bvid, int n) => post('${BiliApi.apiBase}/x/web-interface/coin/add',
       {'bvid': bvid, 'multiply': '$n', 'select_like': '0', 'csrf': _cookies['bili_jct'] ?? ''});
 
-  Future<void> fav(int aid, String add) => post('$_api/x/v3/fav/resource/deal',
+  Future<void> fav(int aid, String add) => post('${BiliApi.apiBase}/x/v3/fav/resource/deal',
       {'rid': '$aid', 'type': '2', 'add_media_ids': add, 'del_media_ids': '',
        'csrf': _cookies['bili_jct'] ?? ''});
 
-  Future<void> follow(String fid, bool on) => post('$_api/x/relation/modify',
+  Future<void> follow(String fid, bool on) => post('${BiliApi.apiBase}/x/relation/modify',
       {'fid': fid, 'act': on ? '1' : '2', 're_src': '11', 'csrf': _cookies['bili_jct'] ?? ''});
 
   // ---------- 工具 ----------

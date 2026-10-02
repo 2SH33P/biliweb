@@ -28,6 +28,8 @@ jobs:
           cache: true
       - run: flutter create --platforms=android --org com.biliweb --project-name biliweb .
       - run: flutter pub get
+      # 后台播放要改 AndroidManifest（前台服务 + 权限）和 minSdk，见脚本注释
+      - run: python3 ../.github/scripts/patch_platform.py android
       - run: flutter analyze
 
   apk:
@@ -46,6 +48,7 @@ jobs:
           cache: true
       - run: flutter create --platforms=android --org com.biliweb --project-name biliweb .
       - run: flutter pub get
+      - run: python3 ../.github/scripts/patch_platform.py android
       # 模板默认用 debug keystore 签 release，所以产物可以直接侧载安装
       - run: flutter build apk --release --split-per-abi
       - uses: actions/upload-artifact@v4

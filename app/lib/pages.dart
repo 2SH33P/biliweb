@@ -5,10 +5,13 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'api.dart';
+import 'media.dart';
+import 'player_page.dart';
 
 const Map<String, String> kSearchTypes = {
   'video': '视频',
@@ -20,8 +23,10 @@ String fmtNum(dynamic n) => BiliApi.fmtCount(n);
 String fmtAgo(dynamic t) => BiliApi.ago(t);
 
 class AppState extends ChangeNotifier {
-  AppState(this.api);
+  AppState(this.api) : media = BiliMedia(api);
   final BiliApi api;
+  /// 清晰度与下载（客户端直连 B站 CDN，不经服务器）
+  final BiliMedia media;
   Map<String, dynamic> me = {};
   bool ready = false;
 
@@ -492,8 +497,27 @@ class _VideoPageState extends State<VideoPage> {
                                   () => _toggleFollow(v)),
                             ],
                           ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: FilledButton.icon(
+                                  icon: const Icon(Icons.play_arrow),
+                                  label: const Text('在线播放'),
+                                  onPressed: _busy ? null : () => _play(v),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  icon: const Icon(Icons.download),
+                                  label: const Text('下载'),
+                                  onPressed: _busy ? null : () => _download(v),
+                                ),
+                              ),
+                            ],
+                          ),
                           const Divider(height: 24),
-                          const Text('在线预览与下载：Phase 2 加入'),
                           if ((v['desc'] ?? '').toString().isNotEmpty)
                             Padding(
                               padding: const EdgeInsets.symmetric(vertical: 8),
@@ -540,6 +564,155 @@ class _VideoPageState extends State<VideoPage> {
         Text(label, style: Theme.of(context).textTheme.bodySmall),
       ],
     );
+  }
+
+  // ---------- 播放与下载（客户端直连 CDN，不经过任何中转服务器）----------
+
+  Future<void> _play(Map<String, dynamic> v) async {
+    setState(() => _log = '读取播放地址…');
+    try {
+      final info = await widget.state.media.info(widget.bvid);
+      setState(() => _log = '');
+      if (!mounted) return;
+      await Navigator.of(context).push(MaterialPageRoute<void>(
+        builder: (_) => PlayerPage(
+          title: info.title.isEmpty ? v['title'].toString() : info.title,
+          artist: (v['owner']['name'] ?? '').toString(),
+          artUri: (v['pic'] ?? '').toString(),
+          info: info,
+        ),
+      ));
+    } catch (e) {
+      setState(() => _log = '播放地址读取失败：$e');
+    }
+  }
+
+  Future<void> _download(Map<String, dynamic> v) async {
+    setState(() => _log = '读取清晰度…');
+    MediaInfo info;
+    try {
+      info = await widget.state.media.info(widget.bvid);
+    } catch (e) {
+      setState(() => _log = '读取清晰度失败：$e');
+      return;
+    }
+    setState(() => _log = '');
+    if (!mounted || info.qualities.isEmpty) return;
+    final chosen = await showModalBottomSheet<QualityOption>(
+      context: context,
+      builder: (ctx) => ListView(
+        shrinkWrap: true,
+        children: [
+          const ListTile(title: Text('选择清晰度')),
+          ...info.qualities.map((o) => ListTile(
+                title: Text('${o.label}　${o.muxed ? '单文件 mp4' : 'DASH 分流'}'),
+                subtitle: Text('${o.width ?? '-'}×${o.height ?? '-'} · ${o.codecs} · 约 ${mbText(o.bytes)}'),
+                onTap: () => Navigator.pop(ctx, o),
+              )),
+          const ListTile(
+            title: Text('说明', style: TextStyle(fontSize: 13)),
+            subtitle: Text('单文件是 B 站已合好的 mp4，通用播放器都能放；'
+                'DASH 分流存成两个文件，需要在本应用里播（视频轨 + 外挂音轨）。',
+                style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+    if (chosen == null) return;
+    await _runDownload(v, chosen);
+  }
+
+  Future<void> _runDownload(Map<String, dynamic> v, QualityOption o) async {
+    final dir = await BiliMedia.downloadDir();
+    final base = BiliMedia.safeName('${v['title']} [${o.label}]');
+    final progress = ValueNotifier<double>(0);
+    var cancelled = false;
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Text('下载 ${o.label}'),
+        content: ValueListenableBuilder<double>(
+          valueListenable: progress,
+          builder: (_, p, __) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              LinearProgressIndicator(value: p <= 0 ? null : p),
+              const SizedBox(height: 10),
+              Text('${(p * 100).toStringAsFixed(0)}%'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              cancelled = true;
+              Navigator.pop(ctx);
+            },
+            child: const Text('取消'),
+          ),
+        ],
+      ),
+    );
+
+    String? videoPath;
+    String? audioPath;
+    Object? failure;
+    try {
+      final media = widget.state.media;
+      if (o.muxed) {
+        videoPath = '${dir.path}/$base.mp4';
+        await media.fetch(o.video!.url, videoPath,
+            onProgress: (p) => progress.value = p, isCancelled: () => cancelled);
+      } else {
+        videoPath = '${dir.path}/$base.video.m4s';
+        audioPath = '${dir.path}/$base.audio.m4s';
+        await media.fetch(o.video!.url, videoPath,
+            onProgress: (p) => progress.value = p * 0.8, isCancelled: () => cancelled);
+        if (o.audio != null) {
+          await media.fetch(o.audio!.url, audioPath,
+              onProgress: (p) => progress.value = 0.8 + p * 0.2,
+              isCancelled: () => cancelled);
+        }
+      }
+    } catch (e) {
+      failure = e;
+    } finally {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+    }
+
+    if (!mounted) return;
+    if (failure != null) {
+      setState(() => _log = '下载失败：$failure');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('下载失败：$failure')));
+      return;
+    }
+    setState(() => _log = '已保存到 $videoPath');
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('已下载 ${o.label}'),
+      duration: const Duration(seconds: 6),
+      action: SnackBarAction(
+        label: '播放',
+        onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+          builder: (_) => PlayerPage(
+            title: '${v['title']}',
+            artist: (v['owner']['name'] ?? '').toString(),
+            artUri: (v['pic'] ?? '').toString(),
+            localVideoPath: videoPath,
+            localAudioPath: audioPath,
+          ),
+        )),
+      ),
+    ));
+    // 单文件可以直接分享出去；DASH 的两个文件只在本应用内可用
+    if (o.muxed && videoPath != null) {
+      try {
+        await Share.shareXFiles([XFile(videoPath)], text: '${v['title']}');
+      } catch (_) {
+        // 分享失败不影响已下载的文件
+      }
+    }
   }
 
   Future<void> _toggleLike(Map<String, dynamic> v) {
