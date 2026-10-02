@@ -76,7 +76,25 @@ Future<void> openMedia({
   }
   await biliPlayer.open(Media(videoUrl, httpHeaders: kMediaHeaders), play: true);
   if (audioUrl != null && audioUrl.isNotEmpty) {
+    await applyMediaHeaders(biliPlayer);
     await biliPlayer.setAudioTrack(AudioTrack.uri(audioUrl));
+  }
+}
+
+/// 把 Referer/UA 显式写给 libmpv。
+///
+/// 为什么需要：media_kit 只在打开主媒体时把 Media.httpHeaders 设成 mpv 的
+/// http-header-fields，而 DASH 的外挂音轨走的是 AudioTrack.uri（mpv 的 audio-add），
+/// 这条路径拿不到 Media 上的头。B站 的 *.bilivideo.com 对没有 Referer 的请求直接 403，
+/// 结果就是音轨加载失败（画面有、声音没有，甚至整个播放被拖死）。
+Future<void> applyMediaHeaders(Player player) async {
+  final platform = player.platform;
+  if (platform is! NativePlayer) return;
+  try {
+    await platform.setProperty('http-header-fields', kMpvHeaderFields);
+  } catch (e) {
+    // 设置失败不该影响播放，退化成 media_kit 自己的 Media.httpHeaders
+    debugPrint('设置 http-header-fields 失败：$e');
   }
 }
 
@@ -116,6 +134,7 @@ class BiliAudioHandler extends BaseAudioHandler with SeekHandler {
     await player.open(Media(videoUrl, httpHeaders: kMediaHeaders), play: true);
     // DASH 分流：视频轨已在播，这里把音频轨挂上，libmpv 负责同步
     if (audioUrl != null && audioUrl.isNotEmpty) {
+      await applyMediaHeaders(player);
       await player.setAudioTrack(AudioTrack.uri(audioUrl));
     }
     _push();

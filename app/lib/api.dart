@@ -138,7 +138,11 @@ class BiliApi {
     for (final i in _mixinTab) {
       if (i < raw.length) buf.write(raw[i]);
     }
-    _mixin = buf.toString();
+    // 必须只取前 32 位：B站 服务端就是这么切的。取满 64 位时 w_rid 必然对不上，
+    // space/* 这类会校验签名的接口直接回 -403「访问权限不足」
+    //（playurl / search 不校验签名，所以它们看起来是好的，别被误导）。
+    final full = buf.toString();
+    _mixin = full.length > 32 ? full.substring(0, 32) : full;
     _mixinAt = DateTime.now();
     return _mixin!;
   }
@@ -507,9 +511,12 @@ class BiliApi {
   static String _clean(dynamic s) =>
       (s ?? '').toString().replaceAll(RegExp(r'</?em[^>]*>'), '').trim();
 
+  /// 上游的封面/头像有两种写法：`//i0.hdslb.com/...` 和 `http://i0.hdslb.com/...`。
+  /// 后者在 Android 9+ 会被明文流量策略静默拦掉（封面全白），所以统一提到 https。
   static String _https(dynamic u) {
-    final s = (u ?? '').toString();
-    return s.startsWith('//') ? 'https:$s' : s;
+    var s = (u ?? '').toString();
+    if (s.startsWith('//')) s = 'https:$s';
+    return s.startsWith('http://') ? 'https://${s.substring(7)}' : s;
   }
 
   /// HTML 转可读纯文本：块级标签变换行，其余标签去掉，常见实体还原

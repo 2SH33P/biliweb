@@ -18,6 +18,12 @@ const Map<String, String> kMediaHeaders = {
   'User-Agent': kUserAgent,
 };
 
+/// libmpv 的 http-header-fields 格式（逗号分隔的 `Header: value`）。
+/// DASH 的外挂音轨是 libmpv 自己去拉的，不继承 Media.httpHeaders，必须单独设，
+/// 否则 *.bilivideo.com 的音轨会 403（画面能放、没声音）。
+const String kMpvHeaderFields =
+    'Referer: https://www.bilibili.com/,User-Agent: $kUserAgent';
+
 /// H.264 兼容性最好，手机上 hvc1/av01 经常放不出来
 const List<String> _codecRank = ['avc1', 'hvc1', 'hev1', 'av01'];
 
@@ -75,6 +81,14 @@ class MediaInfo {
 class BiliMedia {
   BiliMedia(this.api);
   final BiliApi api;
+
+  /// frame_rate 上游给的是字符串（"30.000"），直接 `as num` 会抛 TypeError；
+  /// 这个转换在 info() 的主循环里，一抛就是「预览和下载一起失败」。
+  static int _fps(dynamic v) {
+    if (v == null) return 0;
+    final n = v is num ? v : num.tryParse(v.toString());
+    return n?.round() ?? 0;
+  }
 
   static int _rank(String codecs) {
     final head = codecs.split('.').first;
@@ -146,14 +160,14 @@ class BiliMedia {
           codecs: (x['codecs'] ?? '').toString(),
           width: x['width'] as int?,
           height: x['height'] as int?,
-          fps: (x['frame_rate'] as num?)?.round(),
+          fps: _fps(x['frame_rate']),
         ),
         audio: bestAudio,
         muxed: false,
         width: x['width'] as int?,
         height: x['height'] as int?,
         codecs: (x['codecs'] ?? '').toString().split('.').first,
-        fps: (x['frame_rate'] as num?)?.round() ?? 0,
+        fps: _fps(x['frame_rate']),
       );
     });
 
