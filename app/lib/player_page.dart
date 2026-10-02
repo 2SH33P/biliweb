@@ -60,7 +60,7 @@ class _PlayerPageState extends State<PlayerPage> {
         ? Uri.file(widget.localAudioPath!).toString()
         : (o == null ? widget.audioUrl : (o.muxed ? null : o.audio?.url));
     try {
-      await audioHandler.open(
+      await openMedia(
         videoUrl: video,
         audioUrl: audio,
         title: widget.title,

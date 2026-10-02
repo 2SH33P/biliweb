@@ -26,3 +26,6 @@ void main() {
     expect(BiliApi.ago(now - 86400 * 3), '3天前');
   });
 }
+
+// 启动路径的自检：initPlayer 无论成败都不能抛异常，
+// 否则 main() 会在 runApp 之前挂掉，首帧永远画不出来（曾卡在图标页）。

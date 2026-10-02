@@ -29,6 +29,8 @@ class AppState extends ChangeNotifier {
   final BiliMedia media;
   Map<String, dynamic> me = {};
   bool ready = false;
+  /// 播放器初始化结果，非空且不是「就绪」时在首页顶部提示
+  String playerStatus = '';
 
   Future<void> refreshMe() async {
     try {
@@ -1176,6 +1178,10 @@ class SettingsPage extends StatelessWidget {
           onTap: () => Navigator.of(context).push(MaterialPageRoute(
             builder: (_) => LoginPage(state: state),
           )),
+        ),
+        ListTile(
+          title: const Text('播放器'),
+          subtitle: Text(state.playerStatus.isEmpty ? '初始化中…' : state.playerStatus),
         ),
         ListTile(
           title: const Text('CSRF token'),
