@@ -2,12 +2,19 @@ name: flutter
 
 # 平台脚手架（android/ windows/）不入库：里面有 gradle wrapper 之类的二进制文件，
 # 手写容易出错，所以 CI 里用 flutter create 现场生成，再编译。
+# 注意：push 必须同时声明 branches 和 tags。只写 paths 而不写 tags 时，
+# tag ref 不匹配 branches，v* 推送不会触发任何 job。声明 tags 后，
+# GitHub 不对 tag 推送评估 paths 过滤，tag 会正常触发分析/构建。
 on:
   push:
+    branches:
+      - '**'
     paths:
       - 'app/**'
       - '.github/scripts/**'
       - '.github/workflows/flutter.yml'
+    tags:
+      - 'v*'
   pull_request:
     paths:
       - 'app/**'
@@ -83,3 +90,27 @@ jobs:
           name: biliweb-windows
           path: app/biliweb-windows.zip
           if-no-files-found: error
+
+  # 只有推 v* tag 才发 Release；普通 push/PR 只在 Actions Artifacts 里留产物。
+  release:
+    name: 发布 Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [apk, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: biliweb-apk
+          path: dist/apk
+      - uses: actions/download-artifact@v4
+        with:
+          name: biliweb-windows
+          path: dist/windows
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/apk/*.apk
+            dist/windows/biliweb-windows.zip

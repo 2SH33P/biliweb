@@ -52,13 +52,35 @@ class _PlayerPageState extends State<PlayerPage> {
   bool get _isLocal =>
       widget.localVideoPath != null || widget.videoUrl.startsWith('file:');
 
-  Future<void> _play(QualityOption? o) async {
+  QualityOption? _find(int? q) {
+    final info = widget.info;
+    if (info == null || q == null) return null;
+    for (final o in info.qualities) {
+      if (o.q == q) return o;
+    }
+    return null;
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  /// 返回是否成功打开；调用方据此决定要不要回滚清晰度。
+  Future<bool> _play(QualityOption? o) async {
     final video = widget.localVideoPath != null
         ? Uri.file(widget.localVideoPath!).toString()
         : (o?.video?.url ?? widget.videoUrl);
+    // 空 URL 不交给 libmpv（会打开一个空 Media，画面/状态全错）。
+    if (video.isEmpty) {
+      _snack('没有可用的播放地址');
+      return false;
+    }
     final audio = widget.localAudioPath != null
         ? Uri.file(widget.localAudioPath!).toString()
         : (o == null ? widget.audioUrl : (o.muxed ? null : o.audio?.url));
+    // 切清晰度保留进度：先记下当前位置，开新流后 seek 回去
+    final pos = biliPlayer.state.position;
     try {
       await openMedia(
         videoUrl: video,
@@ -67,21 +89,40 @@ class _PlayerPageState extends State<PlayerPage> {
         artist: widget.artist,
         artUri: widget.artUri,
       );
+      if (pos > Duration.zero) await biliPlayer.seek(pos);
+      return true;
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('播放失败：$e')));
-      }
+      _snack('播放失败：$e');
+      return false;
     }
   }
 
   Future<void> _start() async {
     if (!_started) return;
     final info = widget.info;
-    if (info != null && _q == null && info.qualities.isNotEmpty) {
-      _q = info.qualities.first.q;
+    if (info != null) {
+      if (info.qualities.isEmpty) {
+        // 无清晰度：报错，不去开空 Media
+        _snack('没有可用的清晰度');
+        return;
+      }
+      _q ??= pickDefaultQuality(info.qualities)?.q;
+    } else if (widget.videoUrl.isEmpty && widget.localVideoPath == null) {
+      _snack('没有可用的播放地址');
+      return;
     }
-    final chosen = info?.qualities.where((o) => o.q == _q).toList();
-    await _play(chosen == null || chosen.isEmpty ? null : chosen.first);
+    await _play(_find(_q));
+  }
+
+  /// 切清晰度：失败则回滚到旧清晰度，并把旧流重新放回去。
+  Future<void> _switchQuality(QualityOption o) async {
+    final oldQ = _q;
+    final old = _find(oldQ);
+    setState(() => _q = o.q);
+    final ok = await _play(o);
+    if (ok || !mounted) return;
+    setState(() => _q = oldQ);
+    if (old != null) await _play(old);
   }
 
   @override
@@ -123,12 +164,7 @@ class _PlayerPageState extends State<PlayerPage> {
                         subtitle: Text(
                             '${o.width ?? '-'}×${o.height ?? '-'} · ${o.codecs} · 约 ${mbText(o.bytes)}'),
                         trailing: o.q == _q ? const Icon(Icons.check) : null,
-                        onTap: _isLocal
-                            ? null
-                            : () async {
-                                setState(() => _q = o.q);
-                                await _play(o);
-                              },
+                        onTap: _isLocal ? null : () => _switchQuality(o),
                       )),
                 ],
               ],

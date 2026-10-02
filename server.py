@@ -303,6 +303,15 @@ class Bili:
         except (TypeError, ValueError):
             return 0
 
+    def play(self, bvid):
+        """在线预览优先取 B 站已合并的 720P 单文件流。"""
+        v, p = self._playurl(bvid, qn=64, fnval=1)
+        urls = p.get('durl') or []
+        if not urls:
+            raise BiliError(-404, '没有可播放的单文件流，请改用下载')
+        x = max(urls, key=lambda item: int(item.get('size') or 0))
+        return x['url'], v, int(x.get('size') or 0)
+
     def formats(self, bvid):
         """按清晰度分组，每个档位只留一个最兼容的流，并估算文件大小"""
         v, p = self._playurl(bvid)
@@ -533,6 +542,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._ok(self.bili.history(*self._hist_range(q), max_pages=self._pages(q)))
             if u.path == '/api/history/export':
                 return self._export_history(q)
+            if u.path == '/api/play':
+                url, v, length = self.bili.play(q['bvid'][0])
+                return self._dl_durl(url, v, '在线预览', length, attachment=False)
             if u.path == '/api/download':
                 mode, payload = self.bili.download(q['bvid'][0], int(q.get('q', ['127'])[0]))
                 return self._dl_dash(*payload) if mode == 'dash' else self._dl_durl(*payload)
@@ -571,17 +583,19 @@ class Handler(BaseHTTPRequestHandler):
         t = re.sub(r'[\\/:*?"<>|\r\n\t]+', '_', (v.get('title') or 'video'))[:80].strip()
         return f'{t} [{label}].mp4'
 
-    def _send_dl_headers(self, filename, length=None):
+    def _send_dl_headers(self, filename, length=None, attachment=True):
         self.send_response(200)
         self.send_header('Content-Type', 'video/mp4')
-        self.send_header('Content-Disposition',
-                         "attachment; filename*=UTF-8''" + urllib.parse.quote(filename))
+        if attachment:
+            self.send_header('Content-Disposition',
+                             "attachment; filename*=UTF-8''" + urllib.parse.quote(filename))
         self.send_header('Cache-Control', 'no-store')
         if length:
             self.send_header('Content-Length', str(length))
         else:
-            self.send_header('Transfer-Encoding', 'chunked')   # 合并后的长度事先不知道
+            self.send_header('Transfer-Encoding', 'chunked')
         self.end_headers()
+
 
     def _chunk(self, b):
         self.wfile.write(b'%x\r\n' % len(b) + b + b'\r\n')
@@ -618,29 +632,40 @@ class Handler(BaseHTTPRequestHandler):
             p.kill()
             p.wait()
 
-    def _dl_durl(self, url, v, label):
-        """老视频/无 ffmpeg 时的退路：直接代理 B 站 mux 好的单文件流，长度已知"""
-        req = urllib.request.Request(url, headers={'User-Agent': UA,
-                                                  'Referer': 'https://www.bilibili.com/'})
+    def _dl_durl(self, url, v, label, length=None, attachment=True):
+        """代理 B 站已合并的单文件流，并支持浏览器 Range 请求。"""
+        headers = {'User-Agent': UA, 'Referer': 'https://www.bilibili.com/'}
+        requested = self.headers.get('Range')
+        if requested and requested.startswith('bytes='):
+            headers['Range'] = requested
+        req = urllib.request.Request(url, headers=headers)
         r = self.bili.op.open(req, timeout=30)
-        total = int(r.headers.get('Content-Length') or 0)
-        self._send_dl_headers(self._fname(v, label + ' 单文件'), total or None)
-        sent = 0
+        status = 206 if r.status == 206 else 200
+        # 206 的 Content-Length 是本次分段长度，不能误发完整文件长度，否则浏览器会一直等。
+        total = int(r.headers.get('Content-Length') or 0) if status == 206 else (
+            length or int(r.headers.get('Content-Length') or 0))
+        self.send_response(status)
+        self.send_header('Content-Type', 'video/mp4')
+        if attachment:
+            self.send_header('Content-Disposition',
+                             "attachment; filename*=UTF-8''" + urllib.parse.quote(
+                                 self._fname(v, label + ' 单文件')))
+        self.send_header('Accept-Ranges', 'bytes')
+        if r.headers.get('Content-Range'):
+            self.send_header('Content-Range', r.headers['Content-Range'])
+        if total:
+            self.send_header('Content-Length', str(total))
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+
         try:
             while True:
                 b = r.read(262144)
                 if not b:
                     break
-                if total:
-                    self.wfile.write(b)
-                else:
-                    self._chunk(b)
-                sent += len(b)
-            if not total:
-                self.wfile.write(b'0\r\n\r\n')
-            sys.stderr.write(f'[download] {v.get("bvid")} {label} 单文件 {sent / 1e6:.1f}MB\n')
+                self.wfile.write(b)
         except (BrokenPipeError, ConnectionResetError):
-            sys.stderr.write('[download] 客户端断开\n')
+            pass
         finally:
             r.close()
 

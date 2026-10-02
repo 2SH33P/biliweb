@@ -354,6 +354,7 @@ class _VideoPageState extends State<VideoPage> {
   int _pn = 0;
   bool _commentsEnd = false;
   bool _busy = false;
+  bool _autoOpened = false;
 
   @override
   void initState() {
@@ -367,8 +368,33 @@ class _VideoPageState extends State<VideoPage> {
       final v = await widget.state.api.video(widget.bvid);
       setState(() => _v = v);
       _loadComments();
+      _autoPlay(v);
     } catch (e) {
       setState(() => _error = e.toString());
+    }
+  }
+
+  /// 详情 + 清晰度都就绪后自动进播放页，只做一次（用户仍可手动点「在线播放」）。
+  Future<void> _autoPlay(Map<String, dynamic> v) async {
+    if (_autoOpened) return;
+    _autoOpened = true;
+    try {
+      final info = await widget.state.media.info(widget.bvid);
+      if (!mounted) return;
+      if (info.qualities.isEmpty) {
+        setState(() => _log = '没有可用的清晰度');
+        return;
+      }
+      await Navigator.of(context).push(MaterialPageRoute<void>(
+        builder: (_) => PlayerPage(
+          title: info.title.isEmpty ? v['title'].toString() : info.title,
+          artist: (v['owner']['name'] ?? '').toString(),
+          artUri: (v['pic'] ?? '').toString(),
+          info: info,
+        ),
+      ));
+    } catch (e) {
+      if (mounted) setState(() => _log = '自动播放准备失败：$e');
     }
   }
 

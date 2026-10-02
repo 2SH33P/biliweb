@@ -19,9 +19,22 @@ import 'media.dart';
 
 late final BiliAudioHandler audioHandler;
 
+/// 64MiB 前向缓存：B站 DASH 分片的码率不低，缓存太小会频繁 stall。
+const int kBufferBytes = 64 * 1024 * 1024;
+
 /// 全局唯一的播放器，UI 和后台服务共用同一个实例（顶层 final 是惰性求值的，
 /// 所以只要在首次访问前调用 MediaKit.ensureInitialized 就行）
-final Player biliPlayer = Player();
+final Player biliPlayer =
+    Player(configuration: const PlayerConfiguration(bufferSize: kBufferBytes));
+
+/// libmpv 缓存/网络参数：前向 64MiB、回退 16MiB、预读 20s、超时 15s。
+const Map<String, String> kMpvCacheProps = {
+  'cache': 'yes',
+  'demuxer-max-bytes': '64MiB',
+  'demuxer-max-back-bytes': '16MiB',
+  'demuxer-readahead-secs': '20',
+  'network-timeout': '15',
+};
 
 bool mediaKitReady = false;
 bool audioServiceReady = false;
@@ -34,6 +47,8 @@ Future<void> initPlayer() async {
   try {
     MediaKit.ensureInitialized();
     mediaKitReady = true;
+    // 缓存/超时参数在打开媒体前就位（失败只记日志，不影响播放）
+    await applyCacheConfig(biliPlayer);
   } catch (e) {
     playerInitError = 'libmpv 初始化失败：$e';
     debugPrint(playerInitError);
@@ -74,6 +89,7 @@ Future<void> openMedia({
       artUri: artUri,
     );
   }
+  await applyCacheConfig(biliPlayer);
   await biliPlayer.open(Media(videoUrl, httpHeaders: kMediaHeaders), play: true);
   if (audioUrl != null && audioUrl.isNotEmpty) {
     await applyMediaHeaders(biliPlayer);
@@ -98,13 +114,31 @@ Future<void> applyMediaHeaders(Player player) async {
   }
 }
 
+/// 把缓存与网络超时参数写给 libmpv（只对原生后端有效）。
+Future<void> applyCacheConfig(Player player) async {
+  final platform = player.platform;
+  if (platform is! NativePlayer) return;
+  for (final e in kMpvCacheProps.entries) {
+    try {
+      await platform.setProperty(e.key, e.value);
+    } catch (err) {
+      debugPrint('设置 ${e.key} 失败：$err');
+    }
+  }
+}
+
 class BiliAudioHandler extends BaseAudioHandler with SeekHandler {
   BiliAudioHandler(this.player) {
     // 把 media_kit 的状态变化同步给系统（通知栏、锁屏、蓝牙耳机按键都靠它）
     player.stream.playing.listen((playing) => _push());
-    player.stream.position.listen((_) => _push());
+    // position 事件很密（毫秒级），1 秒节流一次就够通知栏刷新
+    player.stream.position.listen((_) => _pushThrottled());
     player.stream.duration.listen((_) => _push());
     player.stream.buffering.listen((b) => _push(buffering: b));
+    player.stream.buffer.listen((b) {
+      _buffered = b;
+      _push();
+    });
     player.stream.completed.listen((done) async {
       if (done) {
         playbackState.add(playbackState.value.copyWith(
@@ -116,6 +150,17 @@ class BiliAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   final Player player;
+
+  /// demuxer 已缓存到的位置（PlayerStream.buffer），不是总时长
+  Duration _buffered = Duration.zero;
+  DateTime _lastPush = DateTime.fromMillisecondsSinceEpoch(0);
+
+  void _pushThrottled() {
+    final now = DateTime.now();
+    if (now.difference(_lastPush).inSeconds < 1) return;
+    _lastPush = now;
+    _push();
+  }
 
   /// 打开一个视频。audioUrl 为空则只有视频自带音轨。
   Future<void> open({
@@ -131,6 +176,7 @@ class BiliAudioHandler extends BaseAudioHandler with SeekHandler {
       artist: artist,
       artUri: (artUri == null || artUri.isEmpty) ? null : Uri.parse(artUri),
     ));
+    await applyCacheConfig(player);
     await player.open(Media(videoUrl, httpHeaders: kMediaHeaders), play: true);
     // DASH 分流：视频轨已在播，这里把音频轨挂上，libmpv 负责同步
     if (audioUrl != null && audioUrl.isNotEmpty) {
@@ -156,7 +202,8 @@ class BiliAudioHandler extends BaseAudioHandler with SeekHandler {
           : AudioProcessingState.ready,
       playing: playing,
       updatePosition: player.state.position,
-      bufferedPosition: player.state.duration,
+      // 真实缓存位置；以前这里填的是 duration，进度条会把「已播完」当「已缓存完」
+      bufferedPosition: _buffered,
       speed: 1.0,
     ));
   }

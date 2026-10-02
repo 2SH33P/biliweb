@@ -252,7 +252,7 @@ const ago = t => { if(!t) return ''; const x = Date.now()/1000 - t;
        : x < 86400*30 ? Math.floor(x/86400)+'天前' : new Date(t*1000).toISOString().slice(0,10); };
 const mb = b => !b ? '未知大小'
   : (b >= 104857600 ? (b/1048576).toFixed(0) : (b/1048576).toFixed(1)) + ' MB';
-const dlHref = (id, q) => `/api/download?bvid=${encodeURIComponent(id)}&q=${q}&t=${encodeURIComponent(T)}`;
+function playHref(id){ return `/api/play?bvid=${encodeURIComponent(id)}&t=${encodeURIComponent(T)}`; }
 
 const ICON = {
   like:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 20.3S4.5 15.6 4.5 10.4A3.9 3.9 0 0 1 12 7.6a3.9 3.9 0 0 1 7.5 2.8c0 5.2-7.5 9.9-7.5 9.9z"/></svg>',
@@ -437,6 +437,7 @@ async function openVideo(id){
     <button class="btn block" id="cmore" hidden style="margin-top:12px">加载更多评论</button>`;
   $('sbody').onclick = e => onAct(e, v);
   loadComments(v.aid, 1, true);
+  playVideo(v);
 }
 
 async function onAct(e, v){
@@ -516,10 +517,13 @@ async function runDiag(v){
 
 function playVideo(v){
   const box = $('player'); if(!box) return;
-  box.innerHTML = `<video controls playsinline preload="metadata" src="${dlHref(v.id, 127)}"
+  if(box.querySelector('video')) return box.querySelector('video').play();
+  box.innerHTML = `<video controls playsinline preload="auto" src="${playHref(v.id)}"
       style="margin-top:12px"></video>
-    <p class="hint">服务端合并后边下边推，画质取账号上限（一般是 1080P）。
-      这种流没有文件长度，所以进度条不能拖；要拖进度或看原始画质请下载。</p>`;
+    <p class="hint">默认自动播放 720P 预览；下载可选更高清晰度。</p>`;
+
+  const video = box.querySelector('video');
+  video.play().catch(() => {});
 }
 
 function coinDialog(v){

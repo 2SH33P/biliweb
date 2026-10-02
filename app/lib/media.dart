@@ -78,6 +78,36 @@ class MediaInfo {
   final List<QualityOption> qualities;
 }
 
+/// 编码偏好排序：H.264 兼容性最好，排最前，未知编码垫底。
+int _rank(String codecs) {
+  final head = codecs.split('.').first;
+  final i = _codecRank.indexOf(head);
+  return i < 0 ? 9 : i;
+}
+
+/// 默认清晰度策略（纯函数，可单测）：
+/// 1. 优先 720P（q=64）的 DASH，同档里优先 H.264；
+/// 2. 没有则取「不高于 720P」的最高可用；
+/// 3. 还没有则取最低可用。绝不默认 4K/8K。
+QualityOption? pickDefaultQuality(List<QualityOption> list) {
+  if (list.isEmpty) return null;
+  final dash720 = list.where((o) => o.q == 64 && o.isDash).toList()
+    ..sort((a, b) => _rank(a.codecs).compareTo(_rank(b.codecs)));
+  if (dash720.isNotEmpty) return dash720.first;
+  final capped = list.where((o) => o.q <= 64).toList()
+    ..sort((a, b) => b.q.compareTo(a.q));
+  if (capped.isNotEmpty) return capped.first;
+  return (list.toList()..sort((a, b) => a.q.compareTo(b.q))).first;
+}
+
+/// 把单文件流并入清晰度清单：同 q 已有 DASH 时保留 DASH（码率/编码更好），
+/// 单文件只在那一档没有 DASH 时才补进去。
+void mergeMuxed(Map<int, QualityOption> options, QualityOption muxed) {
+  final existing = options[muxed.q];
+  if (existing != null && existing.isDash) return;
+  options[muxed.q] = muxed;
+}
+
 class BiliMedia {
   BiliMedia(this.api);
   final BiliApi api;
@@ -88,12 +118,6 @@ class BiliMedia {
     if (v == null) return 0;
     final n = v is num ? v : num.tryParse(v.toString());
     return n?.round() ?? 0;
-  }
-
-  static int _rank(String codecs) {
-    final head = codecs.split('.').first;
-    final i = _codecRank.indexOf(head);
-    return i < 0 ? 9 : i;
   }
 
   /// 同时取 DASH 分流与单文件流，合并成一份可选清晰度清单
@@ -171,28 +195,27 @@ class BiliMedia {
       );
     });
 
-    // 单文件流：B站 已经合好，下一个文件就能看，优先展示
+    // 单文件流：B站 已经合好，下一个文件就能看；但同清晰度的 DASH 是更好的源，不能被它覆盖
     final durls = (muxed['durl'] as List? ?? []).cast<Map<String, dynamic>>();
     if (durls.isNotEmpty) {
       final q = (muxed['quality'] as int?) ?? 64;
       final size = (durls.first['size'] as int?) ?? 0;
-      final existing = options[q];
-      options[q] = QualityOption(
-        q: q,
-        label: kQuality[q] ?? '$q',
-        kind: 'muxed',
-        bytes: size > 0 ? size : (existing?.bytes ?? 0),
-        video: MediaTrack(
-          url: (durls.first['url'] ?? '').toString(),
-          bandwidth: 0,
+      mergeMuxed(
+        options,
+        QualityOption(
+          q: q,
+          label: kQuality[q] ?? '$q',
+          kind: 'muxed',
+          bytes: size,
+          video: MediaTrack(
+            url: (durls.first['url'] ?? '').toString(),
+            bandwidth: 0,
+            codecs: 'mp4',
+          ),
+          audio: null,
+          muxed: true,
           codecs: 'mp4',
         ),
-        audio: null,
-        muxed: true,
-        width: existing?.width,
-        height: existing?.height,
-        codecs: 'mp4',
-        fps: existing?.fps ?? 0,
       );
     }
 
