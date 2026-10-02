@@ -211,6 +211,36 @@ GET  /biliweb.tar.gz                 自打包源码
 POST /api/do                         {act: like|coin|fav|follow, ...}
 ```
 
+## Flutter 客户端（app/，实验性）
+
+`app/` 是一份 Flutter 重写，目标是**彻底去掉 Termux**：装个 APK 就能用，不用本地起服务。
+而且原生客户端可以自己设置 Referer 请求头，于是「B站 CDN 要求 Referer 为 bilibili.com」
+这个网页端绕不过的限制自动解开，以后直连下载不受服务器带宽限制。
+
+**当前进度（Phase 1）**：登录（扫码或点链接）、搜索三类、视频详情、评论、点赞/投币/收藏/关注、
+UP主主页与投稿列表、观看历史（时间段 + 翻页上限）、JSON 导出到剪贴板。
+
+**还没做（Phase 2）**：在线播放与下载（要引 media_kit 与 ffmpeg，先让 CI 把包跑通再上）。
+
+### 拿现成的安装包
+
+推送到 GitHub 后，Actions 的 `flutter` 工作流会自动构建，在**该次运行的 Artifacts** 里下载：
+
+- `biliweb-apk`：按 ABI 拆分的 APK，选 `arm64-v8a` 那个装（现代手机都是它）
+- `biliweb-windows`：Windows 版 zip（exe 不能单独运行，必须解压整个目录）
+
+`android/`、`windows/` 这些平台目录**不入库**（里面有 gradle wrapper 之类的二进制文件），
+CI 里用 `flutter create --platforms=... .` 现场生成。本地构建照做：
+
+```bash
+cd app
+flutter create --platforms=android,windows --org com.biliweb --project-name biliweb .
+flutter pub get
+flutter build apk --release --split-per-abi
+```
+
+APK 默认用 debug keystore 签名，可以直接侧载安装；要上架或正式分发请自行配置签名。
+
 `start` / `end` 接受 `YYYY-MM-DD`、`YYYY-MM-DD HH:MM` 或 epoch 秒。
 
 ## 实现说明

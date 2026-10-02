@@ -1,0 +1,22 @@
+name: biliweb
+description: 第三方 B站客户端，仅供学习使用
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+  crypto: ^3.0.3
+  shared_preferences: ^2.2.3
+  qr_flutter: ^4.1.0
+  url_launcher: ^6.2.6
+
+dev_dependencies:
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
