@@ -96,6 +96,38 @@ def patch_gradle_properties(root: pathlib.Path) -> None:
     print("gradle.properties 已把 jvm target 校验降级为 warning")
 
 
+def patch_plugin_gradles(compile_sdk: int = 36) -> None:
+    """把 pub cache 里插件的 compileSdk 提到 compile_sdk。
+
+    为什么必须动第三方文件：media_kit_video 把自己的 compileSdk 钉在 31，
+    而它依赖的 wakelock_plus 要求「依赖它的工程必须编译到 API 36」，
+    AAR metadata 校验直接让构建失败。插件不是我们的代码，
+    flutter 也没有覆盖单插件 compileSdk 的正式手段，只能改它的 gradle。
+    """
+    cache = pathlib.Path.home() / ".pub-cache" / "hosted" / "pub.dev"
+    if not cache.exists():
+        print("!! 找不到 pub cache，跳过插件 compileSdk 补丁")
+        return
+    patched = []
+    for f in sorted(cache.glob("*/android/build.gradle*")):
+        s = f.read_text()
+
+        def bump(m: re.Match) -> str:
+            cur = int(m.group("num"))
+            if cur >= compile_sdk:
+                return m.group(0)
+            sep = " = " if "=" in m.group("eq") else " "
+            return f"{m.group('name')}{sep}{compile_sdk}"
+
+        new = re.sub(
+            r"(?P<name>compileSdk|compileSdkVersion)(?P<eq>\s*=\s*|\s+)(?P<num>\d+)",
+            bump, s)
+        if new != s:
+            f.write_text(new)
+            patched.append(f.parent.parent.name)
+    print(f"提了 compileSdk 的插件（{len(patched)} 个）：{', '.join(patched) or '无'}")
+
+
 def patch_plist(root: pathlib.Path) -> None:
     plist = root / "Runner/Info.plist"
     if not plist.exists():
@@ -124,6 +156,7 @@ def main() -> int:
             patch_manifest(root)
             patch_gradle(root)
             patch_gradle_properties(root)
+            patch_plugin_gradles()
         if (root / "Runner/Info.plist").exists():
             patch_plist(root)
     return 0
