@@ -231,7 +231,7 @@ UP主主页与投稿列表、观看历史（时间段 + 翻页上限）、JSON �
 - **普通 push / PR**：产物在该次运行的 **Artifacts** 里下载。
   - `biliweb-apk`：按 ABI 拆分的 APK，选 `arm64-v8a` 那个装（现代手机都是它）
   - `biliweb-windows`：Windows 版 zip（exe 不能单独运行，必须解压整个目录）
-- **推送 `v*` tag**（如 `v0.3.2`）：自动创建 **GitHub Release**，把全部拆分 APK 和
+- **推送 `v*` tag**（如 `v0.3.3`）：自动创建 **GitHub Release**，把全部拆分 APK 和
   `biliweb-windows.zip` 一起挂上去，release notes 自动生成。
 
 `android/`、`windows/` 这些平台目录**不入库**（里面有 gradle wrapper 之类的二进制文件），
