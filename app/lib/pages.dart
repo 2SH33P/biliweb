@@ -37,7 +37,7 @@ class AppState extends ChangeNotifier {
 }
 
 class BiliApp extends StatelessWidget {
-  BiliApp({super.key, required this.state});
+  const BiliApp({super.key, required this.state});
   final AppState state;
 
   @override
@@ -442,10 +442,9 @@ class _VideoPageState extends State<VideoPage> {
                                 onPressed: () async {
                                   await Clipboard.setData(
                                       ClipboardData(text: v['id'].toString()));
-                                  if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(content: Text('已复制 BV 号')));
-                                  }
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(content: Text('已复制 BV 号')));
                                 },
                               ),
                             ],
@@ -944,10 +943,9 @@ class _HistoryPageState extends State<HistoryPage> {
                         ? null
                         : () async {
                             await Clipboard.setData(ClipboardData(text: _exportJson()));
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('JSON 已复制到剪贴板')));
-                            }
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('JSON 已复制到剪贴板')));
                           },
                   ),
                 ],
