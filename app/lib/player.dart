@@ -41,6 +41,7 @@ const Map<String, String> kMpvCacheProps = {
   'demuxer-max-back-bytes': '16MiB',
   'demuxer-readahead-secs': '20',
   'network-timeout': '15',
+  'volume-max': '200',
 };
 
 bool mediaKitReady = false;

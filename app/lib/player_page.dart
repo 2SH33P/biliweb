@@ -38,6 +38,7 @@ class PlayerPage extends StatefulWidget {
 }
 
 class _PlayerPageState extends State<PlayerPage> {
+  final _videoKey = GlobalKey<VideoState>();
   int? _q;
   bool _switchingQuality = false;
 
@@ -46,12 +47,6 @@ class _PlayerPageState extends State<PlayerPage> {
     super.initState();
     _q = widget.initialQ;
     WidgetsBinding.instance.addPostFrameCallback((_) => _start());
-  }
-
-  @override
-  void dispose() {
-    biliPlayer.pause();
-    super.dispose();
   }
 
   bool get _isLocal =>
@@ -157,10 +152,18 @@ class _PlayerPageState extends State<PlayerPage> {
             aspectRatio: 16 / 9,
             child: ColoredBox(
               color: Colors.black,
-              child: Video(controller: biliVideoController),
+              child: Video(
+                key: _videoKey,
+                controller: biliVideoController,
+                controls: NoVideoControls,
+              ),
             ),
           ),
-          PlayerBar(player: biliPlayer),
+          PlayerBar(
+            player: biliPlayer,
+            shots: info?.shots,
+            onFullscreen: () => _videoKey.currentState?.enterFullscreen(),
+          ),
           const Divider(height: 1),
           Expanded(
             child: ListView(
@@ -200,18 +203,15 @@ class _PlayerPageState extends State<PlayerPage> {
 String mbText(int b) =>
     b <= 0 ? '未知大小' : '${(b / 1048576).toStringAsFixed(0)} MB';
 
-/// 简单的播放控制条：进度可拖，播放/暂停，显示时间。
-/// 详情页内嵌播放器与独立播放页共用它，控制逻辑只写一份。
-/// 传入 [qualities] 时右侧多一个紧凑的清晰度下拉，切换不走独立页面。
+/// 页内与独立播放页共用的控制条：拖动预览、倍速、0–200% 音量和清晰度。
 class PlayerBar extends StatefulWidget {
   const PlayerBar({
-    super.key,
-    required this.player,
-    this.qualities = const <QualityOption>[],
-    this.currentQ,
-    this.onPickQuality,
+    super.key, required this.player, this.shots, this.onFullscreen,
+    this.qualities = const <QualityOption>[], this.currentQ, this.onPickQuality,
   });
   final Player player;
+  final VideoShotInfo? shots;
+  final VoidCallback? onFullscreen;
   final List<QualityOption> qualities;
   final int? currentQ;
   final ValueChanged<QualityOption>? onPickQuality;
@@ -221,6 +221,7 @@ class PlayerBar extends StatefulWidget {
 }
 
 class _PlayerBarState extends State<PlayerBar> {
+  static const _speeds = <double>[.5, .75, 1, 1.25, 1.5, 2, 3, 5, 10];
   double? _dragValue;
 
   String? get _currentLabel {
@@ -228,6 +229,71 @@ class _PlayerBarState extends State<PlayerBar> {
       if (o.q == widget.currentQ) return o.label;
     }
     return widget.qualities.isEmpty ? null : widget.qualities.first.label;
+  }
+
+  Future<void> _volumeSheet() async {
+    var volume = widget.player.state.volume.clamp(0, 200).toDouble();
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text('音量 ${volume.round()}%'),
+              Slider(
+                value: volume, max: 200, divisions: 40,
+                onChanged: (v) {
+                  setSheetState(() => volume = v);
+                  widget.player.setVolume(v);
+                },
+              ),
+              const Text('100% 以上会放大音频，可能出现失真'),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _shotPreview(double milliseconds) {
+    final shots = widget.shots;
+    final frame = shots?.frameAt(Duration(milliseconds: milliseconds.round()));
+    if (shots == null || frame == null) return const SizedBox.shrink();
+    const targetWidth = 160.0;
+    final scale = targetWidth / shots.width;
+    final targetHeight = shots.height * scale;
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        SizedBox(
+          width: targetWidth, height: targetHeight,
+          child: ClipRect(
+            child: OverflowBox(
+              alignment: Alignment.topLeft,
+              minWidth: shots.width * shots.columns * scale,
+              maxWidth: shots.width * shots.columns * scale,
+              minHeight: shots.height * shots.rows * scale,
+              maxHeight: shots.height * shots.rows * scale,
+              child: Transform.translate(
+                offset: Offset(-frame.column * targetWidth, -frame.row * targetHeight),
+                child: Image.network(
+                  frame.url,
+                  width: shots.width * shots.columns * scale,
+                  height: shots.height * shots.rows * scale,
+                  fit: BoxFit.fill,
+                  errorBuilder: (_, __, ___) => const ColoredBox(color: Colors.black),
+                ),
+              ),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 3),
+          child: Text(_fmt(Duration(milliseconds: milliseconds.round()))),
+        ),
+      ]),
+    );
   }
 
   @override
@@ -243,95 +309,93 @@ class _PlayerBarState extends State<PlayerBar> {
           builder: (context, durSnap) {
             final dur = durSnap.data ?? Duration.zero;
             final max = dur.inMilliseconds.toDouble();
-            final liveValue = max <= 0
-                ? 0.0
+            final live = max <= 0 ? 0.0
                 : pos.inMilliseconds.toDouble().clamp(0.0, max).toDouble();
-            final value = (_dragValue ?? liveValue)
-                .clamp(0.0, max <= 0 ? 1.0 : max)
-                .toDouble();
-            return Column(
-              children: [
-                Slider(
-                  value: value,
-                  max: max <= 0 ? 1 : max,
-                  onChangeStart: max <= 0 ? null : (v) => setState(() => _dragValue = v),
-                  onChanged: max <= 0 ? null : (v) => setState(() => _dragValue = v),
-                  onChangeEnd: max <= 0
-                      ? null
-                      : (v) {
-                          setState(() => _dragValue = null);
-                          widget.player.seek(Duration(milliseconds: v.round()));
-                        },
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Row(
-                    children: [
-                      StreamBuilder<bool>(
-                        stream: widget.player.stream.playing,
-                        initialData: widget.player.state.playing,
-                        builder: (context, playingSnap) {
-                          final playing = playingSnap.data ?? false;
-                          return IconButton(
-                            icon: Icon(playing ? Icons.pause : Icons.play_arrow),
-                            tooltip: playing ? '暂停' : '播放',
-                            onPressed: () => playing
-                                ? widget.player.pause()
-                                : widget.player.play(),
-                          );
-                        },
-                      ),
-                      StreamBuilder<bool>(
-                        stream: widget.player.stream.buffering,
-                        initialData: widget.player.state.buffering,
-                        builder: (context, bufSnap) =>
-                            (bufSnap.data ?? false)
-                                ? const Padding(
-                                    padding: EdgeInsets.only(left: 8),
-                                    child: SizedBox(
-                                      width: 14, height: 14,
-                                      child: CircularProgressIndicator(strokeWidth: 2),
-                                    ),
-                                  )
-                                : const SizedBox.shrink(),
-                      ),
-                      const Spacer(),
-                      if (widget.qualities.isNotEmpty && widget.onPickQuality != null)
-                        PopupMenuButton<QualityOption>(
-                          tooltip: '清晰度',
-                          onSelected: widget.onPickQuality,
-                          itemBuilder: (ctx) => widget.qualities
-                              .map((o) => PopupMenuItem<QualityOption>(
-                                    value: o,
-                                    child: Text(o.muxed
-                                        ? '${o.label}（单文件）'
-                                        : '${o.label}　${o.height ?? '-'}P'),
-                                  ))
-                              .toList(),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 6),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(_currentLabel ?? '清晰度',
-                                    style: Theme.of(context).textTheme.bodySmall),
-                                const Icon(Icons.arrow_drop_down, size: 20),
-                              ],
-                            ),
-                          ),
-                        ),
-                      Text('${_fmt(pos)} / ${_fmt(dur)}',
-                          style: Theme.of(context).textTheme.bodySmall),
-                    ],
+            final value = (_dragValue ?? live).clamp(0.0, max <= 0 ? 1.0 : max).toDouble();
+            return Column(children: [
+              if (_dragValue != null) _shotPreview(_dragValue!),
+              Slider(
+                value: value, max: max <= 0 ? 1 : max,
+                onChangeStart: max <= 0 ? null : (v) => setState(() => _dragValue = v),
+                onChanged: max <= 0 ? null : (v) => setState(() => _dragValue = v),
+                onChangeEnd: max <= 0 ? null : (v) {
+                  setState(() => _dragValue = null);
+                  widget.player.seek(Duration(milliseconds: v.round()));
+                },
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Row(children: [
+                  StreamBuilder<bool>(
+                    stream: widget.player.stream.playing,
+                    initialData: widget.player.state.playing,
+                    builder: (context, snap) {
+                      final playing = snap.data ?? false;
+                      return IconButton(
+                        visualDensity: VisualDensity.compact,
+                        icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+                        onPressed: () => playing ? widget.player.pause() : widget.player.play(),
+                      );
+                    },
                   ),
-                ),
-              ],
-            );
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    tooltip: '停止', icon: const Icon(Icons.stop),
+                    onPressed: widget.player.stop,
+                  ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    tooltip: '音量', icon: const Icon(Icons.volume_up),
+                    onPressed: _volumeSheet,
+                  ),
+                  StreamBuilder<double>(
+                    stream: widget.player.stream.rate,
+                    initialData: widget.player.state.rate,
+                    builder: (context, snap) {
+                      final rate = snap.data ?? 1;
+                      return PopupMenuButton<double>(
+                        tooltip: '倍速',
+                        onSelected: widget.player.setRate,
+                        itemBuilder: (_) => _speeds.map((x) => PopupMenuItem(
+                          value: x, child: Text('${_rateText(x)}×'),
+                        )).toList(),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 5),
+                          child: Text('${_rateText(rate)}×'),
+                        ),
+                      );
+                    },
+                  ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    tooltip: '全屏', icon: const Icon(Icons.fullscreen),
+                    onPressed: widget.onFullscreen,
+                  ),
+                  const Spacer(),
+                  if (widget.qualities.isNotEmpty && widget.onPickQuality != null)
+                    PopupMenuButton<QualityOption>(
+                      tooltip: '清晰度', onSelected: widget.onPickQuality,
+                      itemBuilder: (_) => widget.qualities.map((o) => PopupMenuItem(
+                        value: o, child: Text(o.muxed ? '${o.label}（单文件）' : o.label),
+                      )).toList(),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 5),
+                        child: Text(_currentLabel ?? '清晰度'),
+                      ),
+                    ),
+                  Text('${_fmt(_dragValue == null ? pos : Duration(milliseconds: _dragValue!.round()))} / ${_fmt(dur)}',
+                      style: Theme.of(context).textTheme.bodySmall),
+                ]),
+              ),
+            ]);
           },
         );
       },
     );
   }
+
+  static String _rateText(double value) =>
+      value.toString().replaceFirst(RegExp(r'\.0$'), '');
 
   static String _fmt(Duration d) {
     final h = d.inHours;

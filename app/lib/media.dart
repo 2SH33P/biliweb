@@ -142,11 +142,44 @@ class QualityOption {
   bool get isDash => kind == 'dash';
 }
 
+class VideoShotFrame {
+  const VideoShotFrame({required this.url, required this.column, required this.row});
+  final String url;
+  final int column;
+  final int row;
+}
+
+class VideoShotInfo {
+  const VideoShotInfo({required this.images, required this.times, required this.columns,
+    required this.rows, required this.width, required this.height});
+  final List<String> images;
+  final List<double> times;
+  final int columns;
+  final int rows;
+  final int width;
+  final int height;
+
+  VideoShotFrame? frameAt(Duration position) {
+    if (images.isEmpty || times.isEmpty || columns <= 0 || rows <= 0) return null;
+    final second = position.inMilliseconds / 1000;
+    var frame = 0;
+    for (var i = 0; i < times.length; i++) {
+      if (times[i] > second) break;
+      frame = i;
+    }
+    final perImage = columns * rows;
+    final imageIndex = (frame ~/ perImage).clamp(0, images.length - 1).toInt();
+    final cell = frame % perImage;
+    return VideoShotFrame(url: images[imageIndex], column: cell % columns, row: cell ~/ columns);
+  }
+}
+
 class MediaInfo {
-  MediaInfo({required this.title, required this.duration, required this.qualities});
+  MediaInfo({required this.title, required this.duration, required this.qualities, this.shots});
   final String title;
   final int duration;
   final List<QualityOption> qualities;
+  final VideoShotInfo? shots;
 }
 
 /// 编码偏好排序：H.264 兼容性最好，排最前，未知编码垫底。
@@ -294,10 +327,38 @@ class BiliMedia {
 
     final list = options.values.toList()
       ..sort((a, b) => b.q.compareTo(a.q));
+    VideoShotInfo? shots;
+    try {
+      final shotData = (await api.get(
+          '${BiliApi.apiBase}/x/player/videoshot',
+          {'bvid': bvid, 'cid': cid, 'index': 1}))['data'] as Map<String, dynamic>? ?? {};
+      final images = (shotData['image'] as List? ?? const [])
+          .map((x) {
+            final s = x.toString();
+            return s.startsWith('//') ? 'https:$s' : s;
+          })
+          .where((x) => x.isNotEmpty)
+          .toList();
+      final times = (shotData['index'] as List? ?? const [])
+          .map((x) => (x as num).toDouble())
+          .toList();
+      if (images.isNotEmpty && times.isNotEmpty) {
+        shots = VideoShotInfo(
+          images: images, times: times,
+          columns: (shotData['img_x_len'] as num?)?.toInt() ?? 10,
+          rows: (shotData['img_y_len'] as num?)?.toInt() ?? 10,
+          width: (shotData['img_x_size'] as num?)?.toInt() ?? 160,
+          height: (shotData['img_y_size'] as num?)?.toInt() ?? 90,
+        );
+      }
+    } catch (_) {
+      // 预览图是增强功能，接口不可用不能阻断播放。
+    }
     return MediaInfo(
       title: (v['title'] ?? '').toString(),
       duration: duration,
       qualities: list,
+      shots: shots,
     );
   }
 

@@ -53,7 +53,11 @@ jobs:
       - run: flutter create --platforms=android --org com.biliweb --project-name biliweb .
       - run: flutter pub get
       - run: python3 ../.github/scripts/patch_platform.py android
-      # 模板默认用 debug keystore 签 release，所以产物可以直接侧载安装
+      - name: 使用固定开发签名
+        run: |
+          mkdir -p "$HOME/.android"
+          cp ../.github/keys/biliweb-debug.keystore "$HOME/.android/debug.keystore"
+      # 固定 debug keystore 仅用于侧载分发，保证覆盖更新时保留登录态和设置
       - run: flutter build apk --release --split-per-abi
       - uses: actions/upload-artifact@v4
         with:

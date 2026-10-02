@@ -348,6 +348,7 @@ class VideoPage extends StatefulWidget {
 }
 
 class _VideoPageState extends State<VideoPage> {
+  final _videoKey = GlobalKey<VideoState>();
   Map<String, dynamic>? _v;
   String? _error;
   String _log = '';
@@ -364,14 +365,6 @@ class _VideoPageState extends State<VideoPage> {
   void initState() {
     super.initState();
     _load();
-  }
-
-  @override
-  void dispose() {
-    // 离开详情页只暂停，不销毁全局播放器（后台服务/独立播放页还要用）；
-    // 避免返回列表后视频还在响
-    biliPlayer.pause();
-    super.dispose();
   }
 
   Future<void> _load() async {
@@ -739,7 +732,11 @@ class _VideoPageState extends State<VideoPage> {
                       ? (pic.isEmpty
                           ? const SizedBox.expand()
                           : Image.network(pic, fit: BoxFit.cover))
-                      : Video(controller: biliVideoController),
+                      : Video(
+                          key: _videoKey,
+                          controller: biliVideoController,
+                          controls: NoVideoControls,
+                        ),
                 ),
               ),
             );
@@ -749,6 +746,8 @@ class _VideoPageState extends State<VideoPage> {
           PlayerBar(
             player: biliPlayer,
             qualities: info.qualities,
+            shots: info.shots,
+            onFullscreen: () => _videoKey.currentState?.enterFullscreen(),
             currentQ: _q,
             onPickQuality: _switchingQuality ? null : _switchQuality,
           ),
