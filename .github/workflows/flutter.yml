@@ -39,7 +39,19 @@ jobs:
       - run: flutter pub get
       # 后台播放要改 AndroidManifest（前台服务 + 权限）和 minSdk，见脚本注释
       - run: python3 ../.github/scripts/patch_platform.py android
-      - run: flutter analyze
+      - name: Flutter analyze
+        shell: bash
+        run: |
+          set +e
+          flutter analyze 2>&1 | tee analyze.log
+          status=${PIPESTATUS[0]}
+          {
+            echo '## Flutter analyze'
+            echo '```text'
+            cat analyze.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
 
   apk:
     name: 构建 APK
