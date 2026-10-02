@@ -32,6 +32,12 @@ class AppState extends ChangeNotifier {
   /// 播放器初始化结果，非空且不是「就绪」时在首页顶部提示
   String playerStatus = '';
 
+  /// 播放器初始化结果由 main() 写入（notifyListeners 是受保护的，类外调不了）
+  void setPlayerStatus(String status) {
+    playerStatus = status;
+    notifyListeners();
+  }
+
   Future<void> refreshMe() async {
     try {
       me = await api.me();

@@ -26,9 +26,8 @@ Future<void> main() async {
   // 播放器初始化放首帧之后；失败只记到 state 上由界面显示，不影响浏览与下载
   unawaited(() async {
     await initPlayer();
-    state.playerStatus = playerInitError.isEmpty
+    state.setPlayerStatus(playerInitError.isEmpty
         ? '就绪${audioServiceReady ? '（含后台播放）' : '（无后台服务，仅应用内播放）'}'
-        : playerInitError;
-    state.notifyListeners();
+        : playerInitError);
   }());
 }
