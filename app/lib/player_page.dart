@@ -38,7 +38,6 @@ class PlayerPage extends StatefulWidget {
 }
 
 class _PlayerPageState extends State<PlayerPage> {
-  final _videoKey = GlobalKey<VideoState>();
   int? _q;
   bool _switchingQuality = false;
 
@@ -153,16 +152,17 @@ class _PlayerPageState extends State<PlayerPage> {
             child: ColoredBox(
               color: Colors.black,
               child: Video(
-                key: _videoKey,
                 controller: biliVideoController,
-                controls: NoVideoControls,
+                controls: (state) => BiliVideoControls(
+                  state: state,
+                  player: biliPlayer,
+                  shots: info?.shots,
+                  qualities: info?.qualities ?? const <QualityOption>[],
+                  currentQ: _q,
+                  onPickQuality: _switchingQuality ? null : _switchQuality,
+                ),
               ),
             ),
-          ),
-          PlayerBar(
-            player: biliPlayer,
-            shots: info?.shots,
-            onFullscreen: () => _videoKey.currentState?.enterFullscreen(),
           ),
           const Divider(height: 1),
           Expanded(
@@ -203,7 +203,44 @@ class _PlayerPageState extends State<PlayerPage> {
 String mbText(int b) =>
     b <= 0 ? '未知大小' : '${(b / 1048576).toStringAsFixed(0)} MB';
 
-/// 页内与独立播放页共用的控制条：拖动预览、倍速、0–200% 音量和清晰度。
+class BiliVideoControls extends StatelessWidget {
+  const BiliVideoControls({
+    super.key, required this.state, required this.player, this.shots,
+    this.qualities = const <QualityOption>[], this.currentQ, this.onPickQuality,
+  });
+  final VideoState state;
+  final Player player;
+  final VideoShotInfo? shots;
+  final List<QualityOption> qualities;
+  final int? currentQ;
+  final ValueChanged<QualityOption>? onPickQuality;
+
+  @override
+  Widget build(BuildContext context) {
+    final fullscreen = state.isFullscreen();
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: SafeArea(
+        top: false,
+        child: Container(
+          color: Colors.black.withValues(alpha: .72),
+          child: Theme(
+            data: ThemeData.dark(useMaterial3: true),
+            child: PlayerBar(
+              player: player, shots: shots, qualities: qualities,
+              currentQ: currentQ, onPickQuality: onPickQuality,
+              onFullscreen: () => fullscreen
+                  ? state.exitFullscreen()
+                  : state.enterFullscreen(),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 页内与全屏共用的控制条：拖动预览、倍速、0–200% 音量和清晰度。
 class PlayerBar extends StatefulWidget {
   const PlayerBar({
     super.key, required this.player, this.shots, this.onFullscreen,

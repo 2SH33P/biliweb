@@ -348,7 +348,6 @@ class VideoPage extends StatefulWidget {
 }
 
 class _VideoPageState extends State<VideoPage> {
-  final _videoKey = GlobalKey<VideoState>();
   Map<String, dynamic>? _v;
   String? _error;
   String _log = '';
@@ -733,24 +732,19 @@ class _VideoPageState extends State<VideoPage> {
                           ? const SizedBox.expand()
                           : Image.network(pic, fit: BoxFit.cover))
                       : Video(
-                          key: _videoKey,
                           controller: biliVideoController,
-                          controls: NoVideoControls,
+                          controls: (state) => BiliVideoControls(
+                            state: state, player: biliPlayer,
+                            qualities: info.qualities, shots: info.shots,
+                            currentQ: _q,
+                            onPickQuality: _switchingQuality ? null : _switchQuality,
+                          ),
                         ),
                 ),
               ),
             );
           },
         ),
-        if (info != null)
-          PlayerBar(
-            player: biliPlayer,
-            qualities: info.qualities,
-            shots: info.shots,
-            onFullscreen: () => _videoKey.currentState?.enterFullscreen(),
-            currentQ: _q,
-            onPickQuality: _switchingQuality ? null : _switchQuality,
-          ),
       ],
     );
   }
