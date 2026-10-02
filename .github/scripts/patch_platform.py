@@ -75,6 +75,27 @@ def patch_gradle(root: pathlib.Path) -> None:
     print("!! 未找到 app/build.gradle{,.kts}")
 
 
+def patch_gradle_properties(root: pathlib.Path) -> None:
+    """一些老插件（如 media_kit_video 依赖的 volume_controller）Kotlin 目标是 1.8，
+    而 Flutter 把 Java 目标设成 11，Gradle 会因此直接报
+    「Inconsistent JVM Target Compatibility」而中断构建。
+    这个校验是保守检查，两者字节码在 D8 上能共存，所以降级为警告。
+    比注入一堆 Kotlin DSL 去统一 jvmTarget 安全得多。"""
+    f = root / "gradle.properties"
+    if not f.exists():
+        print(f"!! 找不到 {f}")
+        return
+    s = f.read_text()
+    if "kotlin.jvm.target.validation.mode" in s:
+        print("gradle.properties 已有 jvm target 校验设置")
+        return
+    s += ("\n# 老插件的 Kotlin 目标 (1.8) 与 Flutter 设的 Java 目标 (11) 不一致，\n"
+          "# 默认会让 Gradle 直接中断；这只是保守校验，字节码能共存。\n"
+          "kotlin.jvm.target.validation.mode=warning\n")
+    f.write_text(s)
+    print("gradle.properties 已把 jvm target 校验降级为 warning")
+
+
 def patch_plist(root: pathlib.Path) -> None:
     plist = root / "Runner/Info.plist"
     if not plist.exists():
@@ -102,6 +123,7 @@ def main() -> int:
         if (root / "app/src/main/AndroidManifest.xml").exists():
             patch_manifest(root)
             patch_gradle(root)
+            patch_gradle_properties(root)
         if (root / "Runner/Info.plist").exists():
             patch_plist(root)
     return 0
