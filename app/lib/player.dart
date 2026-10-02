@@ -31,7 +31,7 @@ final Player biliPlayer =
 /// 与全局播放器配对的唯一 VideoController。media_kit 要求一个 Player 只配一个
 /// controller，详情页内嵌播放与独立播放页共用它，避免多个 controller 抢视频输出。
 /// main() 会在 runApp 前完成 MediaKit.ensureInitialized。
-late final VideoController biliVideoController = VideoController(biliPlayer);
+final VideoController biliVideoController = VideoController(biliPlayer);
 
 /// libmpv 缓存/网络参数：前向 64MiB、回退 16MiB、预读 20s、超时 15s。
 const Map<String, String> kMpvCacheProps = {
