@@ -6,10 +6,12 @@ on:
   push:
     paths:
       - 'app/**'
+      - '.github/scripts/**'
       - '.github/workflows/flutter.yml'
   pull_request:
     paths:
       - 'app/**'
+      - '.github/scripts/**'
   workflow_dispatch:
 
 defaults:
