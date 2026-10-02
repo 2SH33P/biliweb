@@ -13,6 +13,7 @@ import 'dart:async';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
@@ -109,11 +110,11 @@ Future<void> openMedia({
 /// duration/playing 的真实事件；错误流或 10 秒超时则继续下一个 CDN。
 Future<String> openVideoWithFallback(Player player, List<String> urls, String title) async {
   Object? lastErr;
+  await player.stop();
   for (final url in urls) {
     if (url.isEmpty) continue;
     final ready = Completer<void>();
     late final StreamSubscription<Duration> durationSub;
-    late final StreamSubscription<bool> playingSub;
     late final StreamSubscription<String> errorSub;
     void succeed() {
       if (!ready.isCompleted) ready.complete();
@@ -124,61 +125,56 @@ Future<String> openVideoWithFallback(Player player, List<String> urls, String ti
     durationSub = player.stream.duration.listen((value) {
       if (value > Duration.zero) succeed();
     });
-    playingSub = player.stream.playing.listen((value) {
-      if (value) succeed();
-    });
     errorSub = player.stream.error.listen((value) => fail(Exception(value)));
-    final readiness = ready.future.timeout(const Duration(seconds: 10));
     try {
       await player.open(Media(url, httpHeaders: kMediaHeaders), play: true);
-      await readiness;
-      // 主视频确认加载后再重写全局请求头，供随后 audio-add 使用。
+      await ready.future.timeout(const Duration(seconds: 10));
       await applyMediaHeaders(player);
       return url;
     } catch (e) {
       lastErr = e;
+      await player.stop();
       debugPrint('打开失败，尝试备选地址：$url（$e）');
     } finally {
       await durationSub.cancel();
-      await playingSub.cancel();
       await errorSub.cancel();
     }
   }
   throw Exception('所有播放地址都失败（$title）：$lastErr');
 }
 
-/// 依次尝试音轨候选 URL。setAudioTrack 返回不代表 audio-add 已加载；
-/// 等当前音轨变为目标 URI，错误流或短超时则继续下一个 CDN。
+Future<bool> _mediaUrlReachable(String url) async {
+  final client = http.Client();
+  try {
+    final req = http.Request('GET', Uri.parse(url));
+    req.headers.addAll({...kMediaHeaders, 'Range': 'bytes=0-1'});
+    final response = await client.send(req).timeout(const Duration(seconds: 5));
+    final ok = response.statusCode == 200 || response.statusCode == 206;
+    await response.stream.listen((_) {}).cancel();
+    return ok;
+  } catch (_) {
+    return false;
+  } finally {
+    client.close();
+  }
+}
+
+/// 视频真正加载后再挂外挂音轨。先用同样的 Referer/UA 做轻量 Range 探测，
+/// 主 CDN 不通时选择 backup URL；探测全部失败仍尝试第一个地址，避免 CDN 禁探测。
 Future<void> setAudioWithFallback(Player player, List<String> urls) async {
-  Object? lastErr;
-  for (final url in urls) {
-    if (url.isEmpty) continue;
-    final target = AudioTrack.uri(url);
-    final ready = Completer<void>();
-    late final StreamSubscription<Track> trackSub;
-    late final StreamSubscription<String> errorSub;
-    void confirm(Track track) {
-      if (track.audio == target && !ready.isCompleted) ready.complete();
-    }
-    trackSub = player.stream.track.listen(confirm);
-    errorSub = player.stream.error.listen((value) {
-      if (!ready.isCompleted) ready.completeError(Exception(value));
-    });
-    final readiness = ready.future.timeout(const Duration(seconds: 3));
-    try {
-      await player.setAudioTrack(target);
-      confirm(player.state.track);
-      await readiness;
-      return;
-    } catch (e) {
-      lastErr = e;
-      debugPrint('音轨加载失败，尝试备选地址：$url（$e）');
-    } finally {
-      await trackSub.cancel();
-      await errorSub.cancel();
+  final candidates = urls.where((u) => u.isNotEmpty).toList();
+  if (candidates.isEmpty) return;
+  String selected = candidates.first;
+  for (final url in candidates) {
+    if (await _mediaUrlReachable(url)) {
+      selected = url;
+      break;
     }
   }
-  throw Exception('所有音轨地址都失败：$lastErr');
+  await applyMediaHeaders(player);
+  await Future<void>.delayed(const Duration(milliseconds: 250));
+  await applyMediaHeaders(player);
+  await player.setAudioTrack(AudioTrack.uri(selected));
 }
 
 /// 把 Referer/UA 显式写给 libmpv。

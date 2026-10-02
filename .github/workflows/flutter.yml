@@ -79,7 +79,9 @@ jobs:
           cache: true
       - run: flutter create --platforms=windows --org com.biliweb --project-name biliweb .
       - run: flutter pub get
-      - run: python ../.github/scripts/patch_platform.py windows
+      - name: 替换 Windows 图标
+        shell: pwsh
+        run: Copy-Item ../.github/assets/icon/biliweb.ico windows/runner/resources/app_icon.ico -Force
       - run: flutter build windows --release
       - name: 打包成 zip（exe 不能单独运行，需要同目录的 dll 和数据文件）
         working-directory: app

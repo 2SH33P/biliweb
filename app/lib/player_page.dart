@@ -203,7 +203,7 @@ String mbText(int b) =>
 /// 简单的播放控制条：进度可拖，播放/暂停，显示时间。
 /// 详情页内嵌播放器与独立播放页共用它，控制逻辑只写一份。
 /// 传入 [qualities] 时右侧多一个紧凑的清晰度下拉，切换不走独立页面。
-class PlayerBar extends StatelessWidget {
+class PlayerBar extends StatefulWidget {
   const PlayerBar({
     super.key,
     required this.player,
@@ -216,57 +216,74 @@ class PlayerBar extends StatelessWidget {
   final int? currentQ;
   final ValueChanged<QualityOption>? onPickQuality;
 
+  @override
+  State<PlayerBar> createState() => _PlayerBarState();
+}
+
+class _PlayerBarState extends State<PlayerBar> {
+  double? _dragValue;
+
   String? get _currentLabel {
-    for (final o in qualities) {
-      if (o.q == currentQ) return o.label;
+    for (final o in widget.qualities) {
+      if (o.q == widget.currentQ) return o.label;
     }
-    return qualities.isEmpty ? null : qualities.first.label;
+    return widget.qualities.isEmpty ? null : widget.qualities.first.label;
   }
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<Duration>(
-      stream: player.stream.position,
-      initialData: player.state.position,
+      stream: widget.player.stream.position,
+      initialData: widget.player.state.position,
       builder: (context, posSnap) {
         final pos = posSnap.data ?? Duration.zero;
         return StreamBuilder<Duration>(
-          stream: player.stream.duration,
-          initialData: player.state.duration,
+          stream: widget.player.stream.duration,
+          initialData: widget.player.state.duration,
           builder: (context, durSnap) {
             final dur = durSnap.data ?? Duration.zero;
             final max = dur.inMilliseconds.toDouble();
-            final value = max <= 0
+            final liveValue = max <= 0
                 ? 0.0
                 : pos.inMilliseconds.toDouble().clamp(0.0, max).toDouble();
+            final value = (_dragValue ?? liveValue)
+                .clamp(0.0, max <= 0 ? 1.0 : max)
+                .toDouble();
             return Column(
               children: [
                 Slider(
                   value: value,
                   max: max <= 0 ? 1 : max,
-                  onChanged: max <= 0
+                  onChangeStart: max <= 0 ? null : (v) => setState(() => _dragValue = v),
+                  onChanged: max <= 0 ? null : (v) => setState(() => _dragValue = v),
+                  onChangeEnd: max <= 0
                       ? null
-                      : (v) => player.seek(Duration(milliseconds: v.round())),
+                      : (v) {
+                          setState(() => _dragValue = null);
+                          widget.player.seek(Duration(milliseconds: v.round()));
+                        },
                 ),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   child: Row(
                     children: [
                       StreamBuilder<bool>(
-                        stream: player.stream.playing,
-                        initialData: player.state.playing,
+                        stream: widget.player.stream.playing,
+                        initialData: widget.player.state.playing,
                         builder: (context, playingSnap) {
                           final playing = playingSnap.data ?? false;
                           return IconButton(
                             icon: Icon(playing ? Icons.pause : Icons.play_arrow),
                             tooltip: playing ? '暂停' : '播放',
-                            onPressed: () => playing ? player.pause() : player.play(),
+                            onPressed: () => playing
+                                ? widget.player.pause()
+                                : widget.player.play(),
                           );
                         },
                       ),
                       StreamBuilder<bool>(
-                        stream: player.stream.buffering,
-                        initialData: player.state.buffering,
+                        stream: widget.player.stream.buffering,
+                        initialData: widget.player.state.buffering,
                         builder: (context, bufSnap) =>
                             (bufSnap.data ?? false)
                                 ? const Padding(
@@ -279,11 +296,11 @@ class PlayerBar extends StatelessWidget {
                                 : const SizedBox.shrink(),
                       ),
                       const Spacer(),
-                      if (qualities.isNotEmpty && onPickQuality != null)
+                      if (widget.qualities.isNotEmpty && widget.onPickQuality != null)
                         PopupMenuButton<QualityOption>(
                           tooltip: '清晰度',
-                          onSelected: onPickQuality,
-                          itemBuilder: (ctx) => qualities
+                          onSelected: widget.onPickQuality,
+                          itemBuilder: (ctx) => widget.qualities
                               .map((o) => PopupMenuItem<QualityOption>(
                                     value: o,
                                     child: Text(o.muxed
