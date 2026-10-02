@@ -9,6 +9,7 @@
 """
 import pathlib
 import re
+import shutil
 import sys
 
 PERMS = """    <!-- 必须手动加：flutter create 只把 INTERNET 写进 debug/profile 的 manifest，
@@ -128,6 +129,23 @@ def patch_plugin_gradles(compile_sdk: int = 36) -> None:
     print(f"提了 compileSdk 的插件（{len(patched)} 个）：{', '.join(patched) or '无'}")
 
 
+def patch_icons(root: pathlib.Path) -> None:
+    assets = pathlib.Path(__file__).resolve().parent.parent / "assets/icon"
+    android = root / "app/src/main/res"
+    if android.exists():
+        sizes = {"mdpi": 48, "hdpi": 72, "xhdpi": 96,
+                 "xxhdpi": 144, "xxxhdpi": 192}
+        for density, size in sizes.items():
+            target = android / f"mipmap-{density}/ic_launcher.png"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(assets / f"icon-{size}.png", target)
+        print("Android launcher 图标已替换")
+    windows = root / "runner/resources/app_icon.ico"
+    if windows.parent.exists():
+        shutil.copyfile(assets / "biliweb.ico", windows)
+        print("Windows 图标已替换")
+
+
 def patch_plist(root: pathlib.Path) -> None:
     plist = root / "Runner/Info.plist"
     if not plist.exists():
@@ -157,6 +175,7 @@ def main() -> int:
             patch_gradle(root)
             patch_gradle_properties(root)
             patch_plugin_gradles()
+        patch_icons(root)
         if (root / "Runner/Info.plist").exists():
             patch_plist(root)
     return 0

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:media_kit/media_kit.dart';
 
 import 'api.dart';
 import 'pages.dart';
@@ -8,6 +9,7 @@ import 'player.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  MediaKit.ensureInitialized();
 
   // 先把界面画出来：任何初始化都不允许挡首帧。
   // 之前把播放器/后台服务 await 在 runApp 前面，一旦它们卡住或抛异常，

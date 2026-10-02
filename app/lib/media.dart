@@ -29,13 +29,84 @@ const List<String> _codecRank = ['avc1', 'hvc1', 'hev1', 'av01'];
 
 class MediaTrack {
   MediaTrack({required this.url, required this.bandwidth, required this.codecs,
-    this.width, this.height, this.fps});
+    this.width, this.height, this.fps, List<String>? urls})
+      : urls = urls ?? (url.isEmpty ? const <String>[] : <String>[url]);
   final String url;
+  /// 候选地址（base + backup），按可用顺序排列，首个通常就是 [url]。
+  /// B站 的 DASH 分片会给多路 CDN，主路 403/超时就该顺延试下一路。
+  final List<String> urls;
   final int bandwidth;
   final String codecs;
   final int? width;
   final int? height;
   final int? fps;
+}
+
+/// 从 DASH 节点收集所有可用音轨候选。
+///
+/// `dash.audio` 为空时兼容 `dash.dolby.audio` 与 `dash.flac.audio`
+/// （B站 对部分视频只下发杜比/无损音轨），后两者既可能是单个对象也可能是数组。
+List<Map<String, dynamic>> dashAudioPool(Map<String, dynamic>? dash) {
+  if (dash == null) return const <Map<String, dynamic>>[];
+  final normal = (dash['audio'] as List? ?? const [])
+      .cast<Map<String, dynamic>>()
+      .where((audio) => trackUrls(audio).isNotEmpty)
+      .toList();
+  if (normal.isNotEmpty) return normal;
+  final out = <Map<String, dynamic>>[];
+  for (final key in const ['dolby', 'flac']) {
+    final node = dash[key];
+    final a = node is Map ? node['audio'] : null;
+    if (a is Map) {
+      out.add(a.cast<String, dynamic>());
+    } else if (a is List) {
+      out.addAll(a.cast<Map<String, dynamic>>());
+    }
+  }
+  return out;
+}
+
+/// 音轨池挑选：优先 mp4a（兼容性最好），没有则用整池；过滤掉没有可用 URL 的项。
+/// 不再「仅挑 mp4a」，否则杜比/无损音轨的视频会直接静音。
+List<Map<String, dynamic>> pickAudioCandidates(Map<String, dynamic>? dash) {
+  final usable = dashAudioPool(dash).where((a) => trackUrls(a).isNotEmpty).toList();
+  if (usable.isEmpty) return const <Map<String, dynamic>>[];
+  final mp4a = usable
+      .where((a) => (a['codecs'] ?? '').toString().startsWith('mp4a'))
+      .toList();
+  return mp4a.isNotEmpty ? mp4a : usable;
+}
+
+/// 抽出一个轨道的所有候选 URL：base_url/baseUrl + backup_url/backupUrl，去重保序。
+List<String> trackUrls(Map<String, dynamic> x) {
+  final out = <String>[];
+  void add(dynamic v) {
+    final s = (v ?? '').toString().trim();
+    if (s.isNotEmpty && !out.contains(s)) out.add(s);
+  }
+
+  add(x['base_url'] ?? x['baseUrl']);
+  for (final key in const ['backup_url', 'backupUrl']) {
+    final b = x[key];
+    if (b is List) {
+      for (final u in b) {
+        add(u);
+      }
+    } else {
+      add(b);
+    }
+  }
+  return out;
+}
+
+/// 合并主 URL 与候选列表，去重并保持顺序（主 URL 在前）。
+List<String> mergeUrls(String? primary, List<String> candidates) {
+  final out = <String>[];
+  for (final u in <String>[if (primary != null) primary, ...candidates]) {
+    final s = u.trim();
+    if (s.isNotEmpty && !out.contains(s)) out.add(s);
+  }
+  return out;
 }
 
 class QualityOption {
@@ -142,18 +213,16 @@ class BiliMedia {
     // DASH：按清晰度分组，每组挑一个最兼容的编码
     final dashData = dash['dash'] as Map<String, dynamic>? ?? {};
     final videos = (dashData['video'] as List? ?? []).cast<Map<String, dynamic>>();
-    final audios = (dashData['audio'] as List? ?? []).cast<Map<String, dynamic>>()
-        .where((a) => (a['codecs'] ?? '').toString().startsWith('mp4a'))
-        .toList();
-    final audioPool = audios.isNotEmpty
-        ? audios
-        : (dashData['audio'] as List? ?? []).cast<Map<String, dynamic>>();
+    // 音轨池：audio 为空时回退 dolby/flac；不再仅挑 mp4a（否则杜比/无损视频静音）
+    final audioPool = pickAudioCandidates(dashData);
     MediaTrack? bestAudio;
     if (audioPool.isNotEmpty) {
       final a = audioPool.reduce((x, y) =>
           ((x['bandwidth'] as int?) ?? 0) >= ((y['bandwidth'] as int?) ?? 0) ? x : y);
+      final urls = trackUrls(a);
       bestAudio = MediaTrack(
-        url: (a['base_url'] ?? a['baseUrl'] ?? '').toString(),
+        url: urls.isEmpty ? '' : urls.first,
+        urls: urls,
         bandwidth: (a['bandwidth'] as int?) ?? 0,
         codecs: (a['codecs'] ?? '').toString(),
       );
@@ -173,13 +242,15 @@ class BiliMedia {
       final x = list.first;
       final vbr = (x['bandwidth'] as int?) ?? 0;
       final abr = bestAudio?.bandwidth ?? 0;
+      final vurls = trackUrls(x);
       options[q] = QualityOption(
         q: q,
         label: kQuality[q] ?? '$q',
         kind: 'dash',
         bytes: ((vbr + abr) / 8 * duration).round(),
         video: MediaTrack(
-          url: (x['base_url'] ?? x['baseUrl'] ?? '').toString(),
+          url: vurls.isEmpty ? '' : vurls.first,
+          urls: vurls,
           bandwidth: vbr,
           codecs: (x['codecs'] ?? '').toString(),
           width: x['width'] as int?,
@@ -209,6 +280,8 @@ class BiliMedia {
           bytes: size,
           video: MediaTrack(
             url: (durls.first['url'] ?? '').toString(),
+            urls: trackUrls({'base_url': durls.first['url'],
+              'backup_url': durls.first['backup_url'] ?? durls.first['backupUrl']}),
             bandwidth: 0,
             codecs: 'mp4',
           ),

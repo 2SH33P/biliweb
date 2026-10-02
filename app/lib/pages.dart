@@ -1,9 +1,9 @@
-// Phase 1：登录 / 搜索 / 视频详情 / 评论 / 三连 / UP主页 / 观看历史
-// 播放与下载留给 Phase 2（要引 media_kit 和 ffmpeg，先让 CI 把包跑通）。
+// 原生客户端：登录、搜索、页内 DASH 播放、下载、评论楼中楼、互动与历史。
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'api.dart';
 import 'media.dart';
+import 'player.dart';
 import 'player_page.dart';
 
 const Map<String, String> kSearchTypes = {
@@ -355,11 +356,22 @@ class _VideoPageState extends State<VideoPage> {
   bool _commentsEnd = false;
   bool _busy = false;
   bool _autoOpened = false;
+  MediaInfo? _info;
+  int? _q;
+  bool _switchingQuality = false;
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    // 离开详情页只暂停，不销毁全局播放器（后台服务/独立播放页还要用）；
+    // 避免返回列表后视频还在响
+    biliPlayer.pause();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -368,34 +380,103 @@ class _VideoPageState extends State<VideoPage> {
       final v = await widget.state.api.video(widget.bvid);
       setState(() => _v = v);
       _loadComments();
-      _autoPlay(v);
+      _autoPlay();
     } catch (e) {
       setState(() => _error = e.toString());
     }
   }
 
-  /// 详情 + 清晰度都就绪后自动进播放页，只做一次（用户仍可手动点「在线播放」）。
-  Future<void> _autoPlay(Map<String, dynamic> v) async {
+  /// 详情就绪后异步取清晰度，按 pickDefaultQuality（720P）在详情页顶部直接开播；
+  /// 只自动启动一次（用户仍可手动点「在线播放」）。
+  Future<void> _autoPlay() async {
     if (_autoOpened) return;
     _autoOpened = true;
+    final info = await _loadInfo();
+    if (info == null || !mounted) return;
+    await _playChosen(_find(_q), resumeAt: Duration.zero);
+  }
+
+  /// 取清晰度并选默认档；失败只记日志，不影响浏览/下载。
+  Future<MediaInfo?> _loadInfo() async {
     try {
       final info = await widget.state.media.info(widget.bvid);
-      if (!mounted) return;
+      if (!mounted) return null;
       if (info.qualities.isEmpty) {
         setState(() => _log = '没有可用的清晰度');
-        return;
+        return null;
       }
-      await Navigator.of(context).push(MaterialPageRoute<void>(
-        builder: (_) => PlayerPage(
-          title: info.title.isEmpty ? v['title'].toString() : info.title,
-          artist: (v['owner']['name'] ?? '').toString(),
-          artUri: (v['pic'] ?? '').toString(),
-          info: info,
-        ),
-      ));
+      setState(() {
+        _info = info;
+        _q = pickDefaultQuality(info.qualities)?.q;
+      });
+      return info;
     } catch (e) {
-      if (mounted) setState(() => _log = '自动播放准备失败：$e');
+      if (mounted) setState(() => _log = '播放地址读取失败：$e');
+      return null;
     }
+  }
+
+  QualityOption? _find(int? q) {
+    final info = _info;
+    if (info == null || q == null) return null;
+    for (final o in info.qualities) {
+      if (o.q == q) return o;
+    }
+    return null;
+  }
+
+  String get _title =>
+      (_info?.title.isNotEmpty ?? false) ? _info!.title : (_v?['title'] ?? '').toString();
+  String get _artist {
+    final o = _v?['owner'];
+    return o is Map ? (o['name'] ?? '').toString() : '';
+  }
+  String get _artUri => (_v?['pic'] ?? '').toString();
+
+  /// 详情页内嵌播放：不跳独立页面，返回是否成功。
+  Future<bool> _playChosen(QualityOption? o, {required Duration resumeAt}) async {
+    final videoUrls = o?.video?.urls ?? const <String>[];
+    final video = videoUrls.isEmpty ? '' : videoUrls.first;
+    if (video.isEmpty) {
+      if (mounted) setState(() => _log = '没有可用的播放地址');
+      return false;
+    }
+    final audioUrls =
+        (o == null || o.muxed) ? const <String>[] : (o.audio?.urls ?? const <String>[]);
+    try {
+      await openMedia(
+        videoUrl: video,
+        audioUrl: audioUrls.isEmpty ? null : audioUrls.first,
+        videoUrls: videoUrls,
+        audioUrls: audioUrls,
+        title: _title,
+        artist: _artist,
+        artUri: _artUri,
+      );
+      if (resumeAt > Duration.zero) await biliPlayer.seek(resumeAt);
+      return true;
+    } catch (e) {
+      if (mounted) setState(() => _log = '播放失败：$e');
+      return false;
+    }
+  }
+
+  /// 切清晰度：页内完成，失败回滚到旧档并重开旧流。
+  Future<void> _switchQuality(QualityOption o) async {
+    if (_switchingQuality || o.q == _q) return;
+    final resumeAt = biliPlayer.state.position;
+    final oldQ = _q;
+    final old = _find(oldQ);
+    setState(() {
+      _switchingQuality = true;
+      _q = o.q;
+    });
+    final ok = await _playChosen(o, resumeAt: resumeAt);
+    if (!ok && mounted) {
+      setState(() => _q = oldQ);
+      if (old != null) await _playChosen(old, resumeAt: resumeAt);
+    }
+    if (mounted) setState(() => _switchingQuality = false);
   }
 
   Future<void> _loadComments() async {
@@ -451,8 +532,7 @@ class _VideoPageState extends State<VideoPage> {
               : ListView(
                   padding: const EdgeInsets.only(bottom: 32),
                   children: [
-                    if ((v['pic'] ?? '').toString().isNotEmpty)
-                      Image.network(v['pic'].toString(), fit: BoxFit.cover),
+                    _playerSurface(v),
                     Padding(
                       padding: const EdgeInsets.all(16),
                       child: Column(
@@ -569,17 +649,7 @@ class _VideoPageState extends State<VideoPage> {
                         ],
                       ),
                     ),
-                    ..._comments.map((c) => ListTile(
-                          leading: CircleAvatar(
-                            backgroundImage: (c['face'] ?? '').toString().isEmpty
-                                ? null
-                                : NetworkImage(c['face'].toString()),
-                          ),
-                          title: Text((c['uname'] ?? '').toString()),
-                          subtitle: Text((c['message'] ?? '').toString()),
-                          trailing: Text(fmtNum(c['like']),
-                              style: Theme.of(context).textTheme.bodySmall),
-                        )),
+                    ..._comments.map(_commentTile),
                     if (!_commentsEnd)
                       Padding(
                         padding: const EdgeInsets.all(12),
@@ -588,6 +658,101 @@ class _VideoPageState extends State<VideoPage> {
                       ),
                   ],
                 ),
+    );
+  }
+
+  Widget _commentTile(Map<String, dynamic> c) {
+    final location = (c['location'] ?? '').toString();
+    final count = (c['rcount'] as num?)?.toInt() ?? 0;
+    return ListTile(
+      isThreeLine: location.isNotEmpty || count > 0,
+      leading: CircleAvatar(
+        backgroundImage: (c['face'] ?? '').toString().isEmpty
+            ? null
+            : NetworkImage(c['face'].toString()),
+      ),
+      title: Row(children: [
+        Expanded(child: Text((c['uname'] ?? '').toString())),
+        Text('赞 ${fmtNum(c['like'])}', style: Theme.of(context).textTheme.bodySmall),
+      ]),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text((c['message'] ?? '').toString()),
+          if (location.isNotEmpty || count > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 5),
+              child: Wrap(spacing: 12, children: [
+                if (location.isNotEmpty)
+                  Text(location, style: Theme.of(context).textTheme.bodySmall),
+                if (count > 0)
+                  Text('$count 条回复 ›',
+                      style: TextStyle(color: Theme.of(context).colorScheme.primary)),
+              ]),
+            ),
+        ],
+      ),
+      onTap: count <= 0
+          ? null
+          : () => showModalBottomSheet<void>(
+                context: context,
+                isScrollControlled: true,
+                useSafeArea: true,
+                builder: (_) => CommentRepliesSheet(
+                  api: widget.state.api,
+                  oid: (_v!['aid']).toString(),
+                  type: 1,
+                  root: (c['root'] ?? c['rpid']).toString(),
+                  title: (c['uname'] ?? '').toString(),
+                ),
+              ),
+    );
+  }
+
+  /// 详情页顶部播放区：封面和视频始终为 16:9。桌面同时受 960 宽度与
+  /// 当前屏幕可用高度限制，给标题和操作区预留首屏空间。
+  Widget _playerSurface(Map<String, dynamic> v) {
+    final info = _info;
+    final pic = (v['pic'] ?? '').toString();
+    return Column(
+      children: [
+        LayoutBuilder(
+          builder: (context, c) {
+            var w = c.maxWidth.clamp(0.0, 960.0).toDouble();
+            if (c.maxWidth >= 600) {
+              final mq = MediaQuery.of(context);
+              final availableHeight = mq.size.height -
+                  mq.padding.vertical -
+                  kToolbarHeight -
+                  360;
+              final maxHeight = availableHeight.clamp(120.0, 540.0).toDouble();
+              w = w.clamp(0.0, maxHeight * 16 / 9).toDouble();
+            }
+            final h = w * 9 / 16;
+            return Center(
+              child: SizedBox(
+                width: w,
+                height: h,
+                child: ColoredBox(
+                  color: Colors.black,
+                  child: info == null
+                      ? (pic.isEmpty
+                          ? const SizedBox.expand()
+                          : Image.network(pic, fit: BoxFit.cover))
+                      : Video(controller: biliVideoController),
+                ),
+              ),
+            );
+          },
+        ),
+        if (info != null)
+          PlayerBar(
+            player: biliPlayer,
+            qualities: info.qualities,
+            currentQ: _q,
+            onPickQuality: _switchingQuality ? null : _switchQuality,
+          ),
+      ],
     );
   }
 
@@ -603,22 +768,16 @@ class _VideoPageState extends State<VideoPage> {
   // ---------- 播放与下载（客户端直连 CDN，不经过任何中转服务器）----------
 
   Future<void> _play(Map<String, dynamic> v) async {
-    setState(() => _log = '读取播放地址…');
-    try {
-      final info = await widget.state.media.info(widget.bvid);
+    if (_info == null) {
+      setState(() => _log = '读取播放地址…');
+      final info = await _loadInfo();
+      if (info == null || !mounted) return;
       setState(() => _log = '');
-      if (!mounted) return;
-      await Navigator.of(context).push(MaterialPageRoute<void>(
-        builder: (_) => PlayerPage(
-          title: info.title.isEmpty ? v['title'].toString() : info.title,
-          artist: (v['owner']['name'] ?? '').toString(),
-          artUri: (v['pic'] ?? '').toString(),
-          info: info,
-        ),
-      ));
-    } catch (e) {
-      setState(() => _log = '播放地址读取失败：$e');
+      _autoOpened = true; // 手动开播也算启动，别再自动重复开
+      await _playChosen(_find(_q), resumeAt: Duration.zero);
+      return;
     }
+    await _playChosen(_find(_q), resumeAt: Duration.zero);
   }
 
   Future<void> _download(Map<String, dynamic> v) async {
@@ -824,6 +983,121 @@ class _VideoPageState extends State<VideoPage> {
         () => widget.state.api.fav(v['aid'] as int, chosen),
         () => v['favoured'] = true,
         '已收藏');
+  }
+}
+
+class CommentRepliesSheet extends StatefulWidget {
+  const CommentRepliesSheet({
+    super.key, required this.api, required this.oid, required this.type,
+    required this.root, required this.title,
+  });
+  final BiliApi api;
+  final String oid;
+  final int type;
+  final String root;
+  final String title;
+
+  @override
+  State<CommentRepliesSheet> createState() => _CommentRepliesSheetState();
+}
+
+class _CommentRepliesSheetState extends State<CommentRepliesSheet> {
+  final List<Map<String, dynamic>> _items = [];
+  int _page = 0;
+  bool _loading = false;
+  bool _end = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (_loading || _end) return;
+    setState(() { _loading = true; _error = null; });
+    try {
+      final r = await widget.api.commentReplies(
+          widget.oid, widget.type, widget.root, _page + 1);
+      if (!mounted) return;
+      setState(() {
+        _page += 1;
+        _items.addAll((r['items'] as List).cast<Map<String, dynamic>>());
+        _end = r['isEnd'] == true;
+      });
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FractionallySizedBox(
+      heightFactor: .88,
+      child: Column(children: [
+        ListTile(
+          title: Text('${widget.title} 的回复'),
+          trailing: IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: ListView.builder(
+            itemCount: _items.length + 1,
+            itemBuilder: (context, i) {
+              if (i == _items.length) {
+                if (_error != null) {
+                  return Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: OutlinedButton(
+                      onPressed: _load, child: Text('加载失败，点击重试：$_error'),
+                    ),
+                  );
+                }
+                if (_end) return const SizedBox(height: 24);
+                return Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Center(
+                    child: _loading
+                        ? const CircularProgressIndicator()
+                        : OutlinedButton(onPressed: _load, child: const Text('加载更多回复')),
+                  ),
+                );
+              }
+              final c = _items[i];
+              final location = (c['location'] ?? '').toString();
+              return ListTile(
+                leading: CircleAvatar(
+                  backgroundImage: (c['face'] ?? '').toString().isEmpty
+                      ? null : NetworkImage(c['face'].toString()),
+                ),
+                title: Row(children: [
+                  Expanded(child: Text((c['uname'] ?? '').toString())),
+                  Text('赞 ${fmtNum(c['like'])}',
+                      style: Theme.of(context).textTheme.bodySmall),
+                ]),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text((c['message'] ?? '').toString()),
+                    if (location.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(location, style: Theme.of(context).textTheme.bodySmall),
+                      ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ]),
+    );
   }
 }
 

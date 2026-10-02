@@ -14,6 +14,7 @@ import 'dart:async';
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 
 import 'media.dart';
 
@@ -22,10 +23,15 @@ late final BiliAudioHandler audioHandler;
 /// 64MiB 前向缓存：B站 DASH 分片的码率不低，缓存太小会频繁 stall。
 const int kBufferBytes = 64 * 1024 * 1024;
 
-/// 全局唯一的播放器，UI 和后台服务共用同一个实例（顶层 final 是惰性求值的，
-/// 所以只要在首次访问前调用 MediaKit.ensureInitialized 就行）
+/// 全局唯一的播放器，UI 和后台服务共用同一个实例。main() 会在
+/// runApp 前同步完成 MediaKit.ensureInitialized。
 final Player biliPlayer =
     Player(configuration: const PlayerConfiguration(bufferSize: kBufferBytes));
+
+/// 与全局播放器配对的唯一 VideoController。media_kit 要求一个 Player 只配一个
+/// controller，详情页内嵌播放与独立播放页共用它，避免多个 controller 抢视频输出。
+/// main() 会在 runApp 前完成 MediaKit.ensureInitialized。
+late final VideoController biliVideoController = VideoController(biliPlayer);
 
 /// libmpv 缓存/网络参数：前向 64MiB、回退 16MiB、预读 20s、超时 15s。
 const Map<String, String> kMpvCacheProps = {
@@ -45,7 +51,6 @@ String playerInitError = '';
 /// 绝不抛异常、绝不无限等待：失败只记录，不影响别的功能
 Future<void> initPlayer() async {
   try {
-    MediaKit.ensureInitialized();
     mediaKitReady = true;
     // 缓存/超时参数在打开媒体前就位（失败只记日志，不影响播放）
     await applyCacheConfig(biliPlayer);
@@ -73,9 +78,12 @@ Future<void> initPlayer() async {
 }
 
 /// 统一的播放入口：后台服务可用就走它，否则直接喂 media_kit。
+/// videoUrls/audioUrls 是完整候选列表（含 backup），主 URL 失败时依次回退。
 Future<void> openMedia({
   required String videoUrl,
   String? audioUrl,
+  List<String> videoUrls = const <String>[],
+  List<String> audioUrls = const <String>[],
   required String title,
   required String artist,
   String? artUri,
@@ -84,17 +92,93 @@ Future<void> openMedia({
     return audioHandler.open(
       videoUrl: videoUrl,
       audioUrl: audioUrl,
+      videoUrls: videoUrls,
+      audioUrls: audioUrls,
       title: title,
       artist: artist,
       artUri: artUri,
     );
   }
   await applyCacheConfig(biliPlayer);
-  await biliPlayer.open(Media(videoUrl, httpHeaders: kMediaHeaders), play: true);
-  if (audioUrl != null && audioUrl.isNotEmpty) {
-    await applyMediaHeaders(biliPlayer);
-    await biliPlayer.setAudioTrack(AudioTrack.uri(audioUrl));
+  await openVideoWithFallback(biliPlayer, mergeUrls(videoUrl, videoUrls), title);
+  final audios = mergeUrls(audioUrl, audioUrls);
+  if (audios.isNotEmpty) await setAudioWithFallback(biliPlayer, audios);
+}
+
+/// 依次尝试视频候选 URL。open 返回不代表网络媒体已经可用：必须等到
+/// duration/playing 的真实事件；错误流或 10 秒超时则继续下一个 CDN。
+Future<String> openVideoWithFallback(Player player, List<String> urls, String title) async {
+  Object? lastErr;
+  for (final url in urls) {
+    if (url.isEmpty) continue;
+    final ready = Completer<void>();
+    late final StreamSubscription<Duration> durationSub;
+    late final StreamSubscription<bool> playingSub;
+    late final StreamSubscription<String> errorSub;
+    void succeed() {
+      if (!ready.isCompleted) ready.complete();
+    }
+    void fail(Object error) {
+      if (!ready.isCompleted) ready.completeError(error);
+    }
+    durationSub = player.stream.duration.listen((value) {
+      if (value > Duration.zero) succeed();
+    });
+    playingSub = player.stream.playing.listen((value) {
+      if (value) succeed();
+    });
+    errorSub = player.stream.error.listen((value) => fail(Exception(value)));
+    final readiness = ready.future.timeout(const Duration(seconds: 10));
+    try {
+      await player.open(Media(url, httpHeaders: kMediaHeaders), play: true);
+      await readiness;
+      // 主视频确认加载后再重写全局请求头，供随后 audio-add 使用。
+      await applyMediaHeaders(player);
+      return url;
+    } catch (e) {
+      lastErr = e;
+      debugPrint('打开失败，尝试备选地址：$url（$e）');
+    } finally {
+      await durationSub.cancel();
+      await playingSub.cancel();
+      await errorSub.cancel();
+    }
   }
+  throw Exception('所有播放地址都失败（$title）：$lastErr');
+}
+
+/// 依次尝试音轨候选 URL。setAudioTrack 返回不代表 audio-add 已加载；
+/// 等当前音轨变为目标 URI，错误流或短超时则继续下一个 CDN。
+Future<void> setAudioWithFallback(Player player, List<String> urls) async {
+  Object? lastErr;
+  for (final url in urls) {
+    if (url.isEmpty) continue;
+    final target = AudioTrack.uri(url);
+    final ready = Completer<void>();
+    late final StreamSubscription<Track> trackSub;
+    late final StreamSubscription<String> errorSub;
+    void confirm(Track track) {
+      if (track.audio == target && !ready.isCompleted) ready.complete();
+    }
+    trackSub = player.stream.track.listen(confirm);
+    errorSub = player.stream.error.listen((value) {
+      if (!ready.isCompleted) ready.completeError(Exception(value));
+    });
+    final readiness = ready.future.timeout(const Duration(seconds: 3));
+    try {
+      await player.setAudioTrack(target);
+      confirm(player.state.track);
+      await readiness;
+      return;
+    } catch (e) {
+      lastErr = e;
+      debugPrint('音轨加载失败，尝试备选地址：$url（$e）');
+    } finally {
+      await trackSub.cancel();
+      await errorSub.cancel();
+    }
+  }
+  throw Exception('所有音轨地址都失败：$lastErr');
 }
 
 /// 把 Referer/UA 显式写给 libmpv。
@@ -163,9 +247,12 @@ class BiliAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   /// 打开一个视频。audioUrl 为空则只有视频自带音轨。
+  /// 主 URL 失败时依次尝试 videoUrls/audioUrls 里的备选地址。
   Future<void> open({
     required String videoUrl,
     String? audioUrl,
+    List<String> videoUrls = const <String>[],
+    List<String> audioUrls = const <String>[],
     required String title,
     required String artist,
     String? artUri,
@@ -177,12 +264,10 @@ class BiliAudioHandler extends BaseAudioHandler with SeekHandler {
       artUri: (artUri == null || artUri.isEmpty) ? null : Uri.parse(artUri),
     ));
     await applyCacheConfig(player);
-    await player.open(Media(videoUrl, httpHeaders: kMediaHeaders), play: true);
+    await openVideoWithFallback(player, mergeUrls(videoUrl, videoUrls), title);
     // DASH 分流：视频轨已在播，这里把音频轨挂上，libmpv 负责同步
-    if (audioUrl != null && audioUrl.isNotEmpty) {
-      await applyMediaHeaders(player);
-      await player.setAudioTrack(AudioTrack.uri(audioUrl));
-    }
+    final audios = mergeUrls(audioUrl, audioUrls);
+    if (audios.isNotEmpty) await setAudioWithFallback(player, audios);
     _push();
   }
 

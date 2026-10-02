@@ -342,7 +342,27 @@ class BiliApi {
     };
   }
 
-  /// 评论：只能用传统接口，游标版不认 pn
+  static Map<String, dynamic> _replyItem(Map<String, dynamic> c) {
+    final m = c['member'] as Map<String, dynamic>? ?? {};
+    final ct = c['content'] as Map<String, dynamic>? ?? {};
+    final control = c['reply_control'] as Map<String, dynamic>? ?? {};
+    final root = c['root'];
+    return {
+      'rpid': c['rpid'],
+      'root': root == null || root == 0 ? c['rpid'] : root,
+      'parent': c['parent'],
+      'uname': m['uname'],
+      'face': _https(m['avatar']),
+      'message': (ct['message'] ?? '').toString(),
+      'like': c['like'],
+      'rcount': c['rcount'] ?? 0,
+      'ctime': c['ctime'],
+      'location': (control['location'] ?? '').toString(),
+      'replyTo': ((c['parent_str'] ?? '').toString()),
+    };
+  }
+
+  /// 主评论：返回 rpid/root、IP 属地和回复数，楼中楼按需另取。
   Future<Map<String, dynamic>> comments(String oid, int type, int pn) async {
     final d = (await get('${BiliApi.apiBase}/x/v2/reply',
             {'type': type, 'oid': oid, 'pn': pn, 'sort': 2}))['data']
@@ -350,20 +370,26 @@ class BiliApi {
         {};
     final page = d['page'] as Map<String, dynamic>? ?? {};
     final total = page['count'] as int? ?? 0;
-    final items = <Map<String, dynamic>>[];
-    for (final raw in (d['replies'] as List? ?? [])) {
-      final c = raw as Map<String, dynamic>;
-      final m = c['member'] as Map<String, dynamic>? ?? {};
-      final ct = c['content'] as Map<String, dynamic>? ?? {};
-      items.add({
-        'uname': m['uname'],
-        'face': _https(m['avatar']),
-        'message': (ct['message'] ?? '').toString(),
-        'like': c['like'],
-        'rcount': c['rcount'],
-        'ctime': c['ctime'],
-      });
-    }
+    final items = (d['replies'] as List? ?? [])
+        .whereType<Map<String, dynamic>>()
+        .map(_replyItem)
+        .toList();
+    return {'items': items, 'total': total, 'pn': pn, 'isEnd': pn * 20 >= total};
+  }
+
+  /// 楼中楼：按根评论 rpid 分页读取完整回复。
+  Future<Map<String, dynamic>> commentReplies(
+      String oid, int type, String root, int pn) async {
+    final d = (await get('${BiliApi.apiBase}/x/v2/reply/reply',
+            {'type': type, 'oid': oid, 'root': root, 'pn': pn, 'ps': 20}))['data']
+            as Map<String, dynamic>? ??
+        {};
+    final page = d['page'] as Map<String, dynamic>? ?? {};
+    final total = page['count'] as int? ?? 0;
+    final items = (d['replies'] as List? ?? [])
+        .whereType<Map<String, dynamic>>()
+        .map(_replyItem)
+        .toList();
     return {'items': items, 'total': total, 'pn': pn, 'isEnd': pn * 20 >= total};
   }
 

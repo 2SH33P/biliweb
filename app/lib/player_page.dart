@@ -38,15 +38,20 @@ class PlayerPage extends StatefulWidget {
 }
 
 class _PlayerPageState extends State<PlayerPage> {
-  bool _started = false;
   int? _q;
+  bool _switchingQuality = false;
 
   @override
   void initState() {
     super.initState();
     _q = widget.initialQ;
     WidgetsBinding.instance.addPostFrameCallback((_) => _start());
-    _started = true;
+  }
+
+  @override
+  void dispose() {
+    biliPlayer.pause();
+    super.dispose();
   }
 
   bool get _isLocal =>
@@ -67,8 +72,9 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   /// 返回是否成功打开；调用方据此决定要不要回滚清晰度。
-  Future<bool> _play(QualityOption? o) async {
-    final video = widget.localVideoPath != null
+  Future<bool> _play(QualityOption? o, {required Duration resumeAt}) async {
+    final localVideo = widget.localVideoPath != null;
+    final video = localVideo
         ? Uri.file(widget.localVideoPath!).toString()
         : (o?.video?.url ?? widget.videoUrl);
     // 空 URL 不交给 libmpv（会打开一个空 Media，画面/状态全错）。
@@ -76,20 +82,26 @@ class _PlayerPageState extends State<PlayerPage> {
       _snack('没有可用的播放地址');
       return false;
     }
-    final audio = widget.localAudioPath != null
+    final localAudio = widget.localAudioPath != null;
+    final audio = localAudio
         ? Uri.file(widget.localAudioPath!).toString()
         : (o == null ? widget.audioUrl : (o.muxed ? null : o.audio?.url));
-    // 切清晰度保留进度：先记下当前位置，开新流后 seek 回去
-    final pos = biliPlayer.state.position;
+    // 网络视频带上 backup 候选，主 CDN 失败时回退
+    final videoUrls = localVideo ? const <String>[] : (o?.video?.urls ?? const <String>[]);
+    final audioUrls = (localAudio || o == null || o.muxed)
+        ? const <String>[]
+        : (o.audio?.urls ?? const <String>[]);
     try {
       await openMedia(
         videoUrl: video,
         audioUrl: audio,
+        videoUrls: videoUrls,
+        audioUrls: audioUrls,
         title: widget.title,
         artist: widget.artist,
         artUri: widget.artUri,
       );
-      if (pos > Duration.zero) await biliPlayer.seek(pos);
+      if (resumeAt > Duration.zero) await biliPlayer.seek(resumeAt);
       return true;
     } catch (e) {
       _snack('播放失败：$e');
@@ -98,7 +110,7 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   Future<void> _start() async {
-    if (!_started) return;
+    if (!mounted) return;
     final info = widget.info;
     if (info != null) {
       if (info.qualities.isEmpty) {
@@ -111,18 +123,25 @@ class _PlayerPageState extends State<PlayerPage> {
       _snack('没有可用的播放地址');
       return;
     }
-    await _play(_find(_q));
+    await _play(_find(_q), resumeAt: Duration.zero);
   }
 
   /// 切清晰度：失败则回滚到旧清晰度，并把旧流重新放回去。
   Future<void> _switchQuality(QualityOption o) async {
+    if (_switchingQuality || o.q == _q) return;
+    final resumeAt = biliPlayer.state.position;
     final oldQ = _q;
     final old = _find(oldQ);
-    setState(() => _q = o.q);
-    final ok = await _play(o);
-    if (ok || !mounted) return;
-    setState(() => _q = oldQ);
-    if (old != null) await _play(old);
+    setState(() {
+      _switchingQuality = true;
+      _q = o.q;
+    });
+    final ok = await _play(o, resumeAt: resumeAt);
+    if (!ok && mounted) {
+      setState(() => _q = oldQ);
+      if (old != null) await _play(old, resumeAt: resumeAt);
+    }
+    if (mounted) setState(() => _switchingQuality = false);
   }
 
   @override
@@ -138,7 +157,7 @@ class _PlayerPageState extends State<PlayerPage> {
             aspectRatio: 16 / 9,
             child: ColoredBox(
               color: Colors.black,
-              child: Video(controller: VideoController(biliPlayer)),
+              child: Video(controller: biliVideoController),
             ),
           ),
           PlayerBar(player: biliPlayer),
@@ -164,7 +183,9 @@ class _PlayerPageState extends State<PlayerPage> {
                         subtitle: Text(
                             '${o.width ?? '-'}×${o.height ?? '-'} · ${o.codecs} · 约 ${mbText(o.bytes)}'),
                         trailing: o.q == _q ? const Icon(Icons.check) : null,
-                        onTap: _isLocal ? null : () => _switchQuality(o),
+                        onTap: (_isLocal || _switchingQuality)
+                            ? null
+                            : () => _switchQuality(o),
                       )),
                 ],
               ],
@@ -179,10 +200,28 @@ class _PlayerPageState extends State<PlayerPage> {
 String mbText(int b) =>
     b <= 0 ? '未知大小' : '${(b / 1048576).toStringAsFixed(0)} MB';
 
-/// 简单的播放控制条：进度可拖，播放/暂停，显示时间
+/// 简单的播放控制条：进度可拖，播放/暂停，显示时间。
+/// 详情页内嵌播放器与独立播放页共用它，控制逻辑只写一份。
+/// 传入 [qualities] 时右侧多一个紧凑的清晰度下拉，切换不走独立页面。
 class PlayerBar extends StatelessWidget {
-  const PlayerBar({super.key, required this.player});
+  const PlayerBar({
+    super.key,
+    required this.player,
+    this.qualities = const <QualityOption>[],
+    this.currentQ,
+    this.onPickQuality,
+  });
   final Player player;
+  final List<QualityOption> qualities;
+  final int? currentQ;
+  final ValueChanged<QualityOption>? onPickQuality;
+
+  String? get _currentLabel {
+    for (final o in qualities) {
+      if (o.q == currentQ) return o.label;
+    }
+    return qualities.isEmpty ? null : qualities.first.label;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -240,6 +279,30 @@ class PlayerBar extends StatelessWidget {
                                 : const SizedBox.shrink(),
                       ),
                       const Spacer(),
+                      if (qualities.isNotEmpty && onPickQuality != null)
+                        PopupMenuButton<QualityOption>(
+                          tooltip: '清晰度',
+                          onSelected: onPickQuality,
+                          itemBuilder: (ctx) => qualities
+                              .map((o) => PopupMenuItem<QualityOption>(
+                                    value: o,
+                                    child: Text(o.muxed
+                                        ? '${o.label}（单文件）'
+                                        : '${o.label}　${o.height ?? '-'}P'),
+                                  ))
+                              .toList(),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(_currentLabel ?? '清晰度',
+                                    style: Theme.of(context).textTheme.bodySmall),
+                                const Icon(Icons.arrow_drop_down, size: 20),
+                              ],
+                            ),
+                          ),
+                        ),
                       Text('${_fmt(pos)} / ${_fmt(dur)}',
                           style: Theme.of(context).textTheme.bodySmall),
                     ],

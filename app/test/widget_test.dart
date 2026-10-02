@@ -64,6 +64,55 @@ void main() {
     expect(picked.q, 120);
   });
 
+  test('音轨池 audio 为空时回退 dolby/flac，且不限于 mp4a', () {
+    expect(dashAudioPool({'audio': []}), isEmpty);
+    final dolby = dashAudioPool({
+      'audio': [],
+      'dolby': {
+        'audio': {'base_url': 'https://d.test/a.m4s', 'codecs': 'ec-3', 'bandwidth': 1}
+      },
+    });
+    expect(dolby.length, 1);
+    expect(dolby.first['codecs'], 'ec-3');
+    // flac 才会被选中时也能拿到候选
+    final flac = pickAudioCandidates({
+      'audio': [],
+      'flac': {
+        'audio': {'base_url': 'https://f.test/a.m4s', 'codecs': 'fLaC', 'bandwidth': 2}
+      },
+    });
+    expect(flac.length, 1);
+    expect(flac.first['base_url'], 'https://f.test/a.m4s');
+    // 常规池存在时不看 dolby/flac；无 mp4a 时退回整池而不是丢弃
+    final mixed = pickAudioCandidates({
+      'audio': [
+        {'base_url': 'https://x.test/a.m4s', 'codecs': 'ec-3', 'bandwidth': 9},
+      ],
+      'dolby': {'audio': {'base_url': 'https://d.test/a.m4s', 'codecs': 'ec-3'}},
+    });
+    expect(mixed.single['base_url'], 'https://x.test/a.m4s');
+  });
+
+  test('trackUrls 合并 base 与 backup 并去重保序', () {
+    expect(
+      trackUrls({
+        'base_url': 'https://a',
+        'backup_url': ['https://b', 'https://a'],
+      }),
+      ['https://a', 'https://b'],
+    );
+    expect(trackUrls({'baseUrl': 'https://c', 'backupUrl': 'https://d'}),
+        ['https://c', 'https://d']);
+    expect(trackUrls({'base_url': ''}), isEmpty);
+  });
+
+  test('mergeUrls 主 URL 在前且去重，忽略空白项', () {
+    expect(mergeUrls('https://a', ['https://b', 'https://a', ' ']),
+        ['https://a', 'https://b']);
+    expect(mergeUrls('', []), isEmpty);
+    expect(mergeUrls(null, ['https://x']), ['https://x']);
+  });
+
   test('同清晰度 DASH 不被单文件覆盖', () {
     final options = <int, QualityOption>{64: _opt(64, 'dash')};
     mergeMuxed(options, _opt(64, 'muxed'));
