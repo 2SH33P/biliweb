@@ -9,6 +9,7 @@ on:
   push:
     tags:
       - 'v*'
+      - 'ci-*'
   pull_request:
     paths:
       - 'app/**'
@@ -99,11 +100,38 @@ jobs:
           path: app/biliweb-windows.zip
           if-no-files-found: error
 
-  # 只有推 v* tag 才发 Release；普通 push/PR 只在 Actions Artifacts 里留产物。
+  ios:
+    name: 构建 iOS（未签名）
+    needs: analyze
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter create --platforms=ios --org com.biliweb --project-name biliweb .
+      - run: flutter pub get
+      - run: python3 ../.github/scripts/patch_platform.py ios
+      - run: flutter build ios --release --no-codesign
+      - name: 打包未签名 IPA
+        shell: bash
+        run: |
+          rm -rf Payload
+          mkdir Payload
+          cp -R build/ios/iphoneos/Runner.app Payload/
+          ditto -c -k --sequesterRsrc --keepParent Payload biliweb-ios-unsigned.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: biliweb-ios-unsigned
+          path: app/biliweb-ios-unsigned.ipa
+          if-no-files-found: error
+
+  # 只有推 v* tag 才发 Release；ci-* tag 只做全平台构建验证。
   release:
     name: 发布 Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [apk, windows]
+    needs: [apk, windows, ios]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -116,9 +144,14 @@ jobs:
         with:
           name: biliweb-windows
           path: dist/windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: biliweb-ios-unsigned
+          path: dist/ios
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
             dist/apk/*.apk
             dist/windows/biliweb-windows.zip
+            dist/ios/biliweb-ios-unsigned.ipa

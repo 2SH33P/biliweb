@@ -709,8 +709,8 @@ class _VideoPageState extends State<VideoPage> {
     );
   }
 
-  /// 详情页顶部播放区：封面和视频始终为 16:9。桌面同时受 960 宽度与
-  /// 当前屏幕可用高度限制，给标题和操作区预留首屏空间。
+  /// 详情页顶部播放区：手机保持 16:9 全宽；桌面最多 1280×720，
+  /// 同时按窗口高度收缩，给控制条与标题保留空间。
   Widget _playerSurface(Map<String, dynamic> v) {
     final info = _info;
     final pic = (v['pic'] ?? '').toString();
@@ -718,14 +718,14 @@ class _VideoPageState extends State<VideoPage> {
       children: [
         LayoutBuilder(
           builder: (context, c) {
-            var w = c.maxWidth.clamp(0.0, 960.0).toDouble();
-            if (c.maxWidth >= 600) {
+            var w = c.maxWidth.clamp(0.0, 1280.0).toDouble();
+            if (c.maxWidth >= 700) {
               final mq = MediaQuery.of(context);
               final availableHeight = mq.size.height -
                   mq.padding.vertical -
                   kToolbarHeight -
-                  360;
-              final maxHeight = availableHeight.clamp(120.0, 540.0).toDouble();
+                  190;
+              final maxHeight = availableHeight.clamp(240.0, 720.0).toDouble();
               w = w.clamp(0.0, maxHeight * 16 / 9).toDouble();
             }
             final h = w * 9 / 16;
